@@ -1,5 +1,6 @@
-const Database = require('better-sqlite3')
+const { DatabaseSync } = require('node:sqlite')
 const path = require('path')
+const fs = require('fs')
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'data', 'dungeontap.db')
 
@@ -7,9 +8,10 @@ let db
 
 function getDb() {
   if (db) return db
-  db = new Database(DB_PATH)
-  db.pragma('journal_mode = WAL')
-  db.pragma('foreign_keys = ON')
+  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true })
+  db = new DatabaseSync(DB_PATH)
+  db.exec('PRAGMA journal_mode = WAL')
+  db.exec('PRAGMA foreign_keys = ON')
   migrate(db)
   return db
 }
@@ -30,8 +32,8 @@ function migrate(db) {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    CREATE INDEX IF NOT EXISTS idx_runs_score     ON runs (score DESC);
-    CREATE INDEX IF NOT EXISTS idx_runs_daily     ON runs (daily_date, score DESC);
+    CREATE INDEX IF NOT EXISTS idx_runs_score ON runs (score DESC);
+    CREATE INDEX IF NOT EXISTS idx_runs_daily ON runs (daily_date, score DESC);
   `)
 }
 

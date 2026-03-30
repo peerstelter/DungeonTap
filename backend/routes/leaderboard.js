@@ -47,10 +47,11 @@ router.post('/', (req, res) => {
   const today = new Date().toISOString().slice(0, 10)
 
   const db = getDb()
-  const result = db.prepare(`
+  const stmt = db.prepare(`
     INSERT INTO runs (name, class, floor, xp, gold, score, seed, is_daily, daily_date)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `)
+  const result = stmt.run(
     playerName, cls,
     Math.floor(floor), Math.floor(xp ?? 0), Math.floor(gold ?? 0),
     score,
