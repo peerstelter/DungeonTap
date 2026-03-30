@@ -1,0 +1,41 @@
+{
+  "name": "DungeonTap",
+  "short_name": "DungeonTap",
+  "description": "Dungeon-Crawler für dein Smartphone – tippe, swipe, überlebe!",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0f",
+  "theme_color": "#0a0a0f",
+  "lang": "de",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/icons/screenshot-mobile.png",
+      "sizes": "390x844",
+      "type": "image/png",
+      "form_factor": "narrow"
+    }
+  ],
+  "categories": ["games"],
+  "shortcuts": [
+    {
+      "name": "Daily Dungeon",
+      "url": "/game?mode=daily",
+      "description": "Heutigen Daily Dungeon spielen"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+    overflow: hidden;
+    background-color: #0a0a0f;
+    color: #e5e7eb;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@layer utilities {
+  .safe-top { padding-top: env(safe-area-inset-top); }
+  .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+
+  .text-gold { color: #c9a227; }
+  .text-gold-light { color: #f0c040; }
+
+  .bg-dungeon { background-color: #0a0a0f; }
+  .bg-dungeon-dark { background-color: #12121a; }
+  .bg-dungeon-gray { background-color: #1e1e2e; }
+
+  .border-dungeon { border-color: #2a2a3e; }
+
+  .pixel { font-family: 'Press Start 2P', monospace; }
+}
+
+/* HP / Energy bar base */
+.bar-track {
+  @apply h-3 rounded-full bg-dungeon-gray border border-dungeon-border overflow-hidden;
+}
+.bar-fill {
+  @apply h-full rounded-full transition-all duration-300 ease-out;
+}

@@ -1,0 +1,27 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "3000:3000"
+    volumes:
+      - db_data:/app/data
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - FRONTEND_ORIGIN=http://localhost
+    restart: unless-stopped
+
+volumes:
+  db_data:
