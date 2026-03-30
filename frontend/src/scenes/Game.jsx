@@ -6,6 +6,9 @@ import { getMonsterForFloor } from '../game/monsters'
 import { generateDungeon, getDailySeed, ROOM_TYPES } from '../game/dungeon'
 import { createCombatState, applyPlayerAction, applyBlock, applyDodge, resolveEnemyAttack, ATTACK_LABELS } from '../game/combat'
 import { attachSwipeListener } from '../game/swipe'
+import { sfx } from '../game/sound'
+import MonsterSprite from '../components/MonsterSprite'
+import RoomTile from '../components/RoomTile'
 
 const TELEGRAPH_MS = 850 // time player has to block/dodge before hit lands
 
@@ -25,6 +28,7 @@ function initRun(playerClass, seed) {
     gold: 0,
     xp: 0,
     floor: 1,
+    kills: 0,
     items: [],
   }
   return { dungeon, player, phase: 'dungeon_map', combat: null, floorIndex: 0 }
@@ -75,7 +79,7 @@ function reducer(state, action) {
         const xpGain = state.combat.monster.xp
         const goldGain = rollLootGold(state.combat.monster)
         // carry over HP damage taken during the fight
-        const player = { ...state.player, hp: combat.player.hp, xp: state.player.xp + xpGain, gold: state.player.gold + goldGain }
+        const player = { ...state.player, hp: combat.player.hp, xp: state.player.xp + xpGain, gold: state.player.gold + goldGain, kills: state.player.kills + 1 }
         return { ...state, phase: 'loot', combat, player, lastLoot: { xp: xpGain, gold: goldGain } }
       }
       return { ...state, combat }
@@ -247,11 +251,11 @@ export default function Game() {
     const combatPhase = state.combat?.phase
 
     if (combatPhase === 'player_turn') {
-      if (direction === 'up') dispatch({ type: 'PLAYER_ACTION', action: 'attack' })
+      if (direction === 'up') { sfx.attack(); dispatch({ type: 'PLAYER_ACTION', action: 'attack' }) }
     }
     if (combatPhase === 'enemy_telegraph') {
-      if (direction === 'left')  dispatch({ type: 'BLOCK_INPUT' })
-      if (direction === 'right') dispatch({ type: 'DODGE_INPUT' })
+      if (direction === 'left')  { sfx.block(); dispatch({ type: 'BLOCK_INPUT' }) }
+      if (direction === 'right') { sfx.dodge(); dispatch({ type: 'DODGE_INPUT' }) }
     }
   }, [state.phase, state.combat?.phase])
 
@@ -269,17 +273,15 @@ export default function Game() {
       const specialReady = state.combat?.specialBar >= 100
 
       if (combatPhase === 'player_turn') {
-        if (e.key === 'ArrowUp')   { e.preventDefault(); dispatch({ type: 'PLAYER_ACTION', action: 'attack' }) }
+        if (e.key === 'ArrowUp')   { e.preventDefault(); sfx.attack(); dispatch({ type: 'PLAYER_ACTION', action: 'attack' }) }
         if ((e.key === ' ' || e.key === 'ArrowDown') && specialReady) {
           e.preventDefault()
-          // fire special — timing bonus handled via cursor in CombatScreen;
-          // for keyboard we can't read the cursor, so dispatch with a flag
           dispatch({ type: 'PLAYER_ACTION', action: 'special', timingBonus: 1.0, fromKeyboard: true })
         }
       }
       if (combatPhase === 'enemy_telegraph') {
-        if (e.key === 'ArrowLeft')  { e.preventDefault(); dispatch({ type: 'BLOCK_INPUT' }) }
-        if (e.key === 'ArrowRight') { e.preventDefault(); dispatch({ type: 'DODGE_INPUT' }) }
+        if (e.key === 'ArrowLeft')  { e.preventDefault(); sfx.block(); dispatch({ type: 'BLOCK_INPUT' }) }
+        if (e.key === 'ArrowRight') { e.preventDefault(); sfx.dodge(); dispatch({ type: 'DODGE_INPUT' }) }
       }
     }
     window.addEventListener('keydown', onKey)
@@ -347,50 +349,72 @@ export default function Game() {
 function DungeonMap({ state, onEnter, onQuit }) {
   const { dungeon, player, floorIndex } = state
   const currentRoom = dungeon.rooms[floorIndex]
+  const currentRef = useRef(null)
+
+  useEffect(() => {
+    currentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [floorIndex])
 
   return (
     <div className="flex flex-col h-full safe-top safe-bottom bg-dungeon px-4 py-6">
-      <div className="flex justify-between items-center mb-4">
+      {/* Header */}
+      <div className="flex justify-between items-center mb-3">
         <button onClick={onQuit} className="text-gray-600 text-xs pixel">✕ AUFGEBEN</button>
-        <div className="text-gold-light pixel text-xs">ETAGE {player.floor}</div>
-        <div className="text-yellow-500 text-xs pixel">💰 {player.gold}</div>
+        <div className="pixel text-xs text-center">
+          <span className="text-gold-light">ETAGE {player.floor}</span>
+          <span className="text-gray-700 mx-2">·</span>
+          <span className="text-yellow-500">💰 {player.gold}</span>
+        </div>
+        <div className="pixel text-xs text-gray-600">⚔ {player.kills}</div>
       </div>
 
       <HpBar hp={player.hp} maxHp={player.maxHp} />
 
-      <div className="flex-1 overflow-y-auto mt-6 flex flex-col gap-2">
-        {dungeon.rooms.map((room, i) => {
-          const rt = ROOM_TYPES[room.type]
-          const isCurrent = i === floorIndex
-          const isPast = i < floorIndex
+      {/* Path */}
+      <div className="flex-1 overflow-y-auto mt-5 pr-1">
+        <div className="flex flex-col items-center gap-0">
+          {dungeon.rooms.map((room, i) => {
+            const isCurrent = i === floorIndex
+            const isPast = i < floorIndex
+            const label = ROOM_TYPES[room.type]?.label ?? room.type
 
-          return (
-            <div
-              key={i}
-              className={`
-                flex items-center gap-3 p-3 border text-sm
-                ${isCurrent ? 'border-gold bg-dungeon-gray' : ''}
-                ${isPast ? 'border-dungeon-border opacity-40' : ''}
-                ${!isCurrent && !isPast ? 'border-dungeon-border text-gray-600' : ''}
-              `}
-            >
-              <span className="text-xl">{isPast ? '✓' : rt.icon}</span>
-              <span className={`${isCurrent ? 'text-white' : ''}`}>
-                {isCurrent ? <strong>{rt.label}</strong> : rt.label}
-              </span>
-              {isCurrent && <span className="ml-auto text-xs text-gold pixel">← DU BIST HIER</span>}
-            </div>
-          )
-        })}
+            return (
+              <div key={i} className="flex flex-col items-center w-full max-w-xs">
+                <div
+                  ref={isCurrent ? currentRef : null}
+                  className="flex items-center gap-4 w-full"
+                >
+                  {/* tile + connector column */}
+                  <div className="flex flex-col items-center">
+                    <RoomTile room={room} isCurrent={isCurrent} isPast={isPast} />
+                    {i < dungeon.rooms.length - 1 && (
+                      <div className={`w-0.5 h-4 ${isPast ? 'bg-green-900' : 'bg-dungeon-border'}`} />
+                    )}
+                  </div>
+
+                  {/* label */}
+                  <div className={`transition-opacity ${isPast ? 'opacity-30' : ''}`}>
+                    <div className={`pixel text-xs ${isCurrent ? 'text-gold' : isPast ? 'text-gray-600' : 'text-gray-500'}`}>
+                      {label}
+                    </div>
+                    {isCurrent && (
+                      <div className="text-yellow-600 text-xs mt-0.5 animate-pulse">← hier</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
       </div>
 
       {currentRoom && (
         <motion.button
           onClick={onEnter}
           whileTap={{ scale: 0.97 }}
-          className="mt-6 py-4 pixel text-sm border-2 border-gold bg-dungeon-gold text-dungeon-black active:scale-95"
+          className="mt-4 py-4 pixel text-sm border-2 border-gold bg-dungeon-gold text-dungeon-black"
         >
-          {ROOM_TYPES[currentRoom.type].icon} RAUM BETRETEN
+          RAUM BETRETEN
         </motion.button>
       )}
     </div>
@@ -399,7 +423,7 @@ function DungeonMap({ state, onEnter, onQuit }) {
 
 // ─── Combat Screen ────────────────────────────────────────────────────────────
 
-const SWEET_SPOT = 18 // ±% from center (50) counts as perfect
+const SWEET_SPOT = 18
 
 function CombatScreen({ state, swipeZoneRef, onSpecial }) {
   const { combat, player } = state
@@ -407,17 +431,69 @@ function CombatScreen({ state, swipeZoneRef, onSpecial }) {
   const atk = pendingEnemyMove ? ATTACK_LABELS[pendingEnemyMove] : null
   const specialReady = specialBar >= 100 && phase === 'player_turn'
 
-  // Guitar Hero timing cursor — only animates when special is ready
+  // Hit flash states
+  const [monsterFlash, setMonsterFlash] = useState(false)
+  const [playerFlash,  setPlayerFlash]  = useState(false)
+
+  // Floating damage numbers [{id, text, color, forMonster}]
+  const [floats, setFloats] = useState([])
+
+  // Guitar Hero cursor
   const cursorRef = useRef(50)
-  const dirRef = useRef(1)
-  const animRef = useRef(null)
+  const dirRef    = useRef(1)
+  const animRef   = useRef(null)
   const [cursor, setCursor] = useState(50)
 
+  // React to new log entries: flash + sound + float
+  useEffect(() => {
+    const entry = combat.log[combat.log.length - 1]
+    if (!entry) return
+
+    switch (entry.type) {
+      case 'player_attack':
+      case 'player_special':
+        setMonsterFlash(true)
+        setTimeout(() => setMonsterFlash(false), 120)
+        sfx.hit()
+        addFloat(`-${entry.dmg}`, entry.type === 'player_special' ? 'text-purple-400' : 'text-orange-400', true)
+        break
+      case 'enemy_attack':
+        setPlayerFlash(true)
+        setTimeout(() => setPlayerFlash(false), 300)
+        sfx.hit()
+        addFloat(`-${entry.dmg}`, 'text-red-500', false)
+        break
+      case 'player_blocked':
+        setPlayerFlash(true)
+        setTimeout(() => setPlayerFlash(false), 200)
+        addFloat(`-${entry.dmg}`, 'text-blue-400', false)
+        break
+      case 'player_grazed':
+        setPlayerFlash(true)
+        setTimeout(() => setPlayerFlash(false), 200)
+        addFloat(`-${entry.dmg}`, 'text-yellow-500', false)
+        break
+      case 'player_dodged':
+        addFloat('DODGE!', 'text-green-400', false)
+        break
+      default: break
+    }
+
+    if (combat.phase === 'victory') sfx.victory()
+    if (combat.phase === 'defeat')  sfx.death()
+  }, [combat.log.length]) // eslint-disable-line
+
+  function addFloat(text, color, forMonster) {
+    const id = Date.now() + Math.random()
+    setFloats(prev => [...prev, { id, text, color, forMonster }])
+    setTimeout(() => setFloats(prev => prev.filter(f => f.id !== id)), 900)
+  }
+
+  // Special cursor animation
   useEffect(() => {
     if (!specialReady) {
       cancelAnimationFrame(animRef.current)
-      cursorRef.current = 50
-      setCursor(50)
+      cursorRef.current = 50; setCursor(50)
       return
     }
     function tick() {
@@ -434,20 +510,52 @@ function CombatScreen({ state, swipeZoneRef, onSpecial }) {
   function handleSpecial() {
     if (!specialReady) return
     const perfect = Math.abs(cursorRef.current - 50) <= SWEET_SPOT
+    sfx.special()
     onSpecial(perfect ? 2.0 : 1.0)
   }
 
   return (
     <div className="flex flex-col h-full safe-top safe-bottom bg-dungeon select-none">
+      {/* Player hit flash overlay */}
+      <AnimatePresence>
+        {playerFlash && (
+          <motion.div
+            className="fixed inset-0 bg-red-900 pointer-events-none z-50"
+            initial={{ opacity: 0.45 }}
+            animate={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Monster area */}
-      <div className="flex flex-col items-center pt-8 px-4 gap-3">
+      <div className="relative flex flex-col items-center pt-8 px-4 gap-3">
+        {/* Floating numbers above monster */}
+        <div className="absolute top-2 left-0 right-0 flex justify-center pointer-events-none">
+          <AnimatePresence>
+            {floats.filter(f => f.forMonster).map(f => (
+              <motion.div
+                key={f.id}
+                className={`pixel text-sm absolute ${f.color}`}
+                initial={{ y: 0, opacity: 1 }}
+                animate={{ y: -50, opacity: 0 }}
+                exit={{}}
+                transition={{ duration: 0.8 }}
+                style={{ left: `${40 + Math.random() * 20}%` }}
+              >
+                {f.text}
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+
         <motion.div
-          className="text-8xl"
-          animate={phase === 'enemy_telegraph' ? { x: [0, -6, 6, -6, 0] } : {}}
-          transition={{ duration: 0.4 }}
+          animate={phase === 'enemy_telegraph' ? { x: [0, -8, 8, -8, 0] } : {}}
+          transition={{ duration: 0.35 }}
         >
-          {monster.icon}
+          <MonsterSprite id={monster.id} size={96} flash={monsterFlash} />
         </motion.div>
+
         <div className="pixel text-white text-xs">{monster.name}</div>
         <div className="w-full max-w-xs">
           <HpBar hp={monster.hp} maxHp={monster.maxHp} color="bg-red-700" />
@@ -465,7 +573,7 @@ function CombatScreen({ state, swipeZoneRef, onSpecial }) {
               {atk.label}
               {atk.warn
                 ? <span className="ml-2 animate-pulse">← BLOCK!</span>
-                : <span className="ml-2 text-gray-500">← Block &nbsp; → Dodge</span>
+                : <span className="ml-2 text-gray-600">← Block &nbsp; → Dodge</span>
               }
             </motion.div>
           )}
@@ -475,12 +583,30 @@ function CombatScreen({ state, swipeZoneRef, onSpecial }) {
       {/* Swipe zone */}
       <div
         ref={swipeZoneRef}
-        className="flex-1 flex flex-col items-center justify-center cursor-pointer touch-none"
+        className="flex-1 flex flex-col items-center justify-center cursor-pointer touch-none relative"
       >
+        {/* Floating numbers for player damage */}
+        <div className="absolute inset-0 pointer-events-none flex justify-center items-center">
+          <AnimatePresence>
+            {floats.filter(f => !f.forMonster).map(f => (
+              <motion.div
+                key={f.id}
+                className={`pixel text-sm absolute ${f.color}`}
+                initial={{ y: 0, opacity: 1 }}
+                animate={{ y: -40, opacity: 0 }}
+                exit={{}}
+                transition={{ duration: 0.7 }}
+              >
+                {f.text}
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+
         <div className="text-gray-700 text-xs pixel text-center leading-loose">
-          {phase === 'player_turn' && !specialReady && <>↑ Angriff <span className="text-gray-800">/ [↑]</span></>}
-          {phase === 'player_turn' && specialReady  && <span className="text-purple-300 animate-pulse">SPEZIAL BEREIT!<br/>Tippen / [Leertaste]</span>}
-          {phase === 'enemy_telegraph' && !atk?.warn && <span className="text-gray-500">← Block [←] &nbsp;&nbsp; → Dodge [→]</span>}
+          {phase === 'player_turn' && !specialReady && <>↑ Angriff <span className="text-gray-800">[↑]</span></>}
+          {phase === 'player_turn' && specialReady  && <span className="text-purple-300 animate-pulse">SPEZIAL BEREIT!<br/>Tippen / [Space]</span>}
+          {phase === 'enemy_telegraph' && !atk?.warn && <span className="text-gray-500">← Block [←] &nbsp; → Dodge [→]</span>}
           {phase === 'enemy_telegraph' &&  atk?.warn && <span className="text-red-400 animate-pulse">← BLOCKEN! [←]<br/>(nicht ausweichbar)</span>}
         </div>
       </div>
@@ -489,46 +615,34 @@ function CombatScreen({ state, swipeZoneRef, onSpecial }) {
       <div className="px-4 pb-6 safe-bottom flex flex-col gap-3">
         <HpBar hp={combat.player.hp} maxHp={combat.player.maxHp} />
 
-        {/* Special bar with timing cursor */}
         <div className="flex items-center gap-3">
           <span className="pixel text-xs text-purple-400">SPEZIAL</span>
           <div className="flex-1 relative bar-track">
-            {/* fill */}
             <div
               className={`bar-fill ${specialReady ? 'bg-purple-500' : 'bg-purple-900'}`}
               style={{ width: `${specialBar}%` }}
             />
-            {/* sweet-spot zone */}
             {specialReady && (
-              <div
-                className="absolute top-0 h-full bg-yellow-400 opacity-30 rounded"
-                style={{ left: `${50 - SWEET_SPOT}%`, width: `${SWEET_SPOT * 2}%` }}
-              />
+              <div className="absolute top-0 h-full bg-yellow-400 opacity-30 rounded"
+                style={{ left: `${50 - SWEET_SPOT}%`, width: `${SWEET_SPOT * 2}%` }} />
             )}
-            {/* moving cursor */}
             {specialReady && (
-              <div
-                className="absolute top-0 h-full w-1 bg-white rounded"
-                style={{ left: `${cursor}%`, transform: 'translateX(-50%)' }}
-              />
+              <div className="absolute top-0 h-full w-1 bg-white rounded"
+                style={{ left: `${cursor}%`, transform: 'translateX(-50%)' }} />
             )}
           </div>
           <button
             onClick={handleSpecial}
             disabled={!specialReady}
-            className={`
-              pixel text-xs px-3 py-2 border transition-all
+            className={`pixel text-xs px-3 py-2 border transition-all
               ${specialReady
                 ? 'border-purple-400 text-purple-200 bg-purple-900 active:scale-95'
-                : 'border-dungeon-border text-gray-700 cursor-not-allowed'
-              }
-            `}
+                : 'border-dungeon-border text-gray-700 cursor-not-allowed'}`}
           >
             {CLASSES[player.class]?.specialName ?? 'SPEZIAL'}
           </button>
         </div>
 
-        {/* Combat log */}
         {combat.log.length > 0 && (
           <AnimatePresence mode="wait">
             <motion.div
@@ -624,6 +738,7 @@ function ShopScreen({ state, onBuy, onLeave }) {
 
 function RestScreen({ state, onNext }) {
   const { player, restHeal } = state
+  useEffect(() => { sfx.heal() }, [])
   return (
     <div className="flex flex-col items-center justify-center h-full gap-6 px-6 bg-dungeon safe-top safe-bottom">
       <div className="text-6xl">🔥</div>
@@ -676,6 +791,7 @@ function TreasureScreen({ state, onNext }) {
 
 function LootScreen({ state, onNext }) {
   const { lastLoot } = state
+  useEffect(() => { sfx.coin() }, [])
   return (
     <div className="flex flex-col items-center justify-center h-full gap-6 px-6 bg-dungeon safe-top safe-bottom">
       <div className="text-5xl">🏆</div>
@@ -737,18 +853,43 @@ function RunEnd({ state, won, isDaily, onRetry, onLeaderboard, onMenu }) {
     }
   }
 
+  useEffect(() => {
+    won ? sfx.victory() : sfx.death()
+  }, []) // eslint-disable-line
+
   return (
     <div className="flex flex-col items-center justify-center h-full gap-5 px-6 bg-dungeon safe-top safe-bottom">
-      <div className="text-5xl">{won ? '🏅' : '💀'}</div>
-      <div className={`pixel text-sm ${won ? 'text-gold-light' : 'text-red-500'}`}>
-        {won ? 'DUNGEON BEZWUNGEN!' : 'TOD'}
-      </div>
+      <motion.div
+        initial={{ scale: 0.5, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ type: 'spring', stiffness: 200, damping: 14 }}
+        className={`pixel text-sm ${won ? 'text-gold-light' : 'text-red-500'}`}
+      >
+        {won ? '🏅 DUNGEON BEZWUNGEN!' : '💀 TOD'}
+      </motion.div>
 
-      <div className="text-center text-gray-400 text-sm leading-relaxed">
-        <div>Etage {player.floor}</div>
-        <div>{player.xp} XP · {player.gold} Gold</div>
-        {score != null && <div className="text-gold pixel text-xs mt-1">Score: {score}</div>}
-      </div>
+      {/* Stats grid */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.2 }}
+        className="grid grid-cols-2 gap-3 w-full max-w-xs"
+      >
+        {[
+          { icon: '🏰', label: 'Etage',  value: player.floor },
+          { icon: '⚔️', label: 'Kills',  value: player.kills },
+          { icon: '⭐', label: 'XP',     value: player.xp   },
+          { icon: '💰', label: 'Gold',   value: player.gold  },
+        ].map(s => (
+          <div key={s.label} className="border border-dungeon-border bg-dungeon-dark p-3 text-center">
+            <div className="text-lg">{s.icon}</div>
+            <div className="pixel text-gold text-sm mt-1">{s.value}</div>
+            <div className="text-gray-600 text-xs">{s.label}</div>
+          </div>
+        ))}
+      </motion.div>
+
+      {score != null && <div className="text-gold pixel text-xs">Score: {score}</div>}
 
       {!submitted ? (
         <div className="flex flex-col gap-3 w-full max-w-xs">
