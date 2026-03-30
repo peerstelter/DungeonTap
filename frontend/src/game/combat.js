@@ -31,16 +31,13 @@ export function applyPlayerAction(state, action) {
       specialBar = Math.min(100, specialBar + 14)
       break
     }
-    case 'dodge': {
-      log = [...log, { type: 'player_dodge' }]
-      specialBar = Math.min(100, specialBar + 6)
-      break
-    }
     case 'special': {
       if (specialBar < 100) return state
-      const dmg = Math.max(1, Math.round(player.atk * player.specialEffect.damage) - Math.floor(monster.def * 0.5))
+      const bonus = action.timingBonus ?? 1.0
+      const dmg = Math.max(1, Math.round(player.atk * player.specialEffect.damage * bonus) - Math.floor(monster.def * 0.5))
+      const perfect = bonus > 1.0
       monster = { ...monster, hp: monster.hp - dmg }
-      log = [...log, { type: 'player_special', dmg }]
+      log = [...log, { type: 'player_special', dmg, perfect }]
       specialBar = 0
       break
     }
@@ -68,6 +65,11 @@ export function applyPlayerAction(state, action) {
 export function applyBlock(state) {
   if (state.phase !== 'enemy_telegraph') return state
   return { ...state, lastPlayerAction: 'block' }
+}
+
+export function applyDodge(state) {
+  if (state.phase !== 'enemy_telegraph') return state
+  return { ...state, lastPlayerAction: 'dodge', dodgeBonus: true }
 }
 
 export function resolveEnemyAttack(state) {

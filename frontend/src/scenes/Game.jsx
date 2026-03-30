@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { CLASSES } from '../game/classes'
 import { getMonsterForFloor } from '../game/monsters'
 import { generateDungeon, getDailySeed, ROOM_TYPES } from '../game/dungeon'
-import { createCombatState, applyPlayerAction, applyBlock, resolveEnemyAttack, ATTACK_LABELS } from '../game/combat'
+import { createCombatState, applyPlayerAction, applyBlock, applyDodge, resolveEnemyAttack, ATTACK_LABELS } from '../game/combat'
 import { attachSwipeListener } from '../game/swipe'
 
 const TELEGRAPH_MS = 850 // time player has to block/dodge before hit lands
@@ -84,6 +84,11 @@ function reducer(state, action) {
     case 'BLOCK_INPUT': {
       if (state.phase !== 'combat') return state
       return { ...state, combat: applyBlock(state.combat) }
+    }
+
+    case 'DODGE_INPUT': {
+      if (state.phase !== 'combat') return state
+      return { ...state, combat: applyDodge(state.combat) }
     }
 
     case 'RESOLVE_ENEMY': {
@@ -242,11 +247,11 @@ export default function Game() {
     const combatPhase = state.combat?.phase
 
     if (combatPhase === 'player_turn') {
-      if (direction === 'up')    dispatch({ type: 'PLAYER_ACTION', action: 'attack' })
-      if (direction === 'right') dispatch({ type: 'PLAYER_ACTION', action: 'dodge' })
+      if (direction === 'up') dispatch({ type: 'PLAYER_ACTION', action: 'attack' })
     }
     if (combatPhase === 'enemy_telegraph') {
-      if (direction === 'left') dispatch({ type: 'BLOCK_INPUT' })
+      if (direction === 'left')  dispatch({ type: 'BLOCK_INPUT' })
+      if (direction === 'right') dispatch({ type: 'DODGE_INPUT' })
     }
   }, [state.phase, state.combat?.phase])
 
@@ -264,7 +269,7 @@ export default function Game() {
       <CombatScreen
         state={state}
         swipeZoneRef={swipeZoneRef}
-        onSpecial={() => dispatch({ type: 'PLAYER_ACTION', action: 'special' })}
+        onSpecial={(timingBonus) => dispatch({ type: 'PLAYER_ACTION', action: 'special', timingBonus })}
       />
     )
   }
@@ -369,10 +374,43 @@ function DungeonMap({ state, onEnter, onQuit }) {
 
 // ─── Combat Screen ────────────────────────────────────────────────────────────
 
+const SWEET_SPOT = 18 // ±% from center (50) counts as perfect
+
 function CombatScreen({ state, swipeZoneRef, onSpecial }) {
   const { combat, player } = state
   const { monster, phase, pendingEnemyMove, specialBar } = combat
   const atk = pendingEnemyMove ? ATTACK_LABELS[pendingEnemyMove] : null
+  const specialReady = specialBar >= 100 && phase === 'player_turn'
+
+  // Guitar Hero timing cursor — only animates when special is ready
+  const cursorRef = useRef(50)
+  const dirRef = useRef(1)
+  const animRef = useRef(null)
+  const [cursor, setCursor] = useState(50)
+
+  useEffect(() => {
+    if (!specialReady) {
+      cancelAnimationFrame(animRef.current)
+      cursorRef.current = 50
+      setCursor(50)
+      return
+    }
+    function tick() {
+      cursorRef.current += 1.4 * dirRef.current
+      if (cursorRef.current >= 100) { cursorRef.current = 100; dirRef.current = -1 }
+      if (cursorRef.current <= 0)   { cursorRef.current = 0;   dirRef.current =  1 }
+      setCursor(Math.round(cursorRef.current))
+      animRef.current = requestAnimationFrame(tick)
+    }
+    animRef.current = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(animRef.current)
+  }, [specialReady])
+
+  function handleSpecial() {
+    if (!specialReady) return
+    const perfect = Math.abs(cursorRef.current - 50) <= SWEET_SPOT
+    onSpecial(perfect ? 2.0 : 1.0)
+  }
 
   return (
     <div className="flex flex-col h-full safe-top safe-bottom bg-dungeon select-none">
@@ -401,8 +439,8 @@ function CombatScreen({ state, swipeZoneRef, onSpecial }) {
             >
               {atk.label}
               {atk.warn
-                ? <span className="ml-2 animate-pulse">← BLOCK! (kein Ausweichen)</span>
-                : <span className="ml-2 text-gray-600">← Block / → Dodge</span>
+                ? <span className="ml-2 animate-pulse">← BLOCK!</span>
+                : <span className="ml-2 text-gray-500">← Block &nbsp; → Dodge</span>
               }
             </motion.div>
           )}
@@ -414,13 +452,11 @@ function CombatScreen({ state, swipeZoneRef, onSpecial }) {
         ref={swipeZoneRef}
         className="flex-1 flex flex-col items-center justify-center cursor-pointer touch-none"
       >
-        <div className="text-gray-700 text-xs pixel text-center leading-relaxed">
-          {phase === 'player_turn' && (
-            <>↑ Angriff &nbsp; → Ausweichen<br />Energie voll → Spezial</>
-          )}
-          {phase === 'enemy_telegraph' && (
-            <span className="text-yellow-400">← LINKS zum Blocken!</span>
-          )}
+        <div className="text-gray-700 text-xs pixel text-center leading-loose">
+          {phase === 'player_turn' && !specialReady && <>↑ Angriff</>}
+          {phase === 'player_turn' && specialReady  && <span className="text-purple-300 animate-pulse">SPEZIAL BEREIT – JETZT TIPPEN!</span>}
+          {phase === 'enemy_telegraph' && !atk?.warn && <span className="text-gray-500">← Block &nbsp;&nbsp; → Dodge</span>}
+          {phase === 'enemy_telegraph' &&  atk?.warn && <span className="text-red-400 animate-pulse">← BLOCKEN! (nicht ausweichbar)</span>}
         </div>
       </div>
 
@@ -428,22 +464,37 @@ function CombatScreen({ state, swipeZoneRef, onSpecial }) {
       <div className="px-4 pb-6 safe-bottom flex flex-col gap-3">
         <HpBar hp={combat.player.hp} maxHp={combat.player.maxHp} />
 
-        {/* Special bar */}
+        {/* Special bar with timing cursor */}
         <div className="flex items-center gap-3">
           <span className="pixel text-xs text-purple-400">SPEZIAL</span>
-          <div className="flex-1 bar-track">
+          <div className="flex-1 relative bar-track">
+            {/* fill */}
             <div
-              className={`bar-fill ${specialBar >= 100 ? 'bg-purple-500 animate-pulse' : 'bg-purple-800'}`}
+              className={`bar-fill ${specialReady ? 'bg-purple-500' : 'bg-purple-900'}`}
               style={{ width: `${specialBar}%` }}
             />
+            {/* sweet-spot zone */}
+            {specialReady && (
+              <div
+                className="absolute top-0 h-full bg-yellow-400 opacity-30 rounded"
+                style={{ left: `${50 - SWEET_SPOT}%`, width: `${SWEET_SPOT * 2}%` }}
+              />
+            )}
+            {/* moving cursor */}
+            {specialReady && (
+              <div
+                className="absolute top-0 h-full w-1 bg-white rounded"
+                style={{ left: `${cursor}%`, transform: 'translateX(-50%)' }}
+              />
+            )}
           </div>
           <button
-            onClick={onSpecial}
-            disabled={specialBar < 100 || phase !== 'player_turn'}
+            onClick={handleSpecial}
+            disabled={!specialReady}
             className={`
               pixel text-xs px-3 py-2 border transition-all
-              ${specialBar >= 100 && phase === 'player_turn'
-                ? 'border-purple-500 text-purple-300 active:scale-95'
+              ${specialReady
+                ? 'border-purple-400 text-purple-200 bg-purple-900 active:scale-95'
                 : 'border-dungeon-border text-gray-700 cursor-not-allowed'
               }
             `}
@@ -452,7 +503,7 @@ function CombatScreen({ state, swipeZoneRef, onSpecial }) {
           </button>
         </div>
 
-        {/* Combat log (last entry) */}
+        {/* Combat log */}
         {combat.log.length > 0 && (
           <AnimatePresence mode="wait">
             <motion.div
@@ -473,7 +524,7 @@ function CombatScreen({ state, swipeZoneRef, onSpecial }) {
 function LogEntry({ entry }) {
   switch (entry.type) {
     case 'player_attack':   return <>Du triffst für <span className="text-orange-400">{entry.dmg}</span> Schaden</>
-    case 'player_special':  return <>Spezial! <span className="text-purple-400">{entry.dmg}</span> Schaden</>
+    case 'player_special':  return <>{entry.perfect ? '✨ PERFEKT! ' : ''}<span className="text-purple-400">{entry.dmg}</span> Spezialschaden</>
     case 'player_dodge':    return <span className="text-green-400">Ausgewichen!</span>
     case 'player_blocked':  return <>Geblockt! Nur <span className="text-blue-400">{entry.dmg}</span> Schaden</>
     case 'player_dodged':   return <span className="text-green-400">Perfekt ausgewichen!</span>
