@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, useCallback } from 'react'
+import { useState, useEffect, useReducer, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CLASSES } from '../game/classes'
@@ -232,10 +232,28 @@ export default function Game() {
     )
   }
   if (state.phase === 'game_over') {
-    return <GameOver state={state} onRetry={() => navigate('/class-select')} onMenu={() => navigate('/')} />
+    return (
+      <RunEnd
+        state={state}
+        won={false}
+        isDaily={isDaily}
+        onRetry={() => navigate('/class-select')}
+        onLeaderboard={() => navigate('/leaderboard')}
+        onMenu={() => navigate('/')}
+      />
+    )
   }
   if (state.phase === 'victory_run') {
-    return <VictoryRun state={state} onMenu={() => navigate('/')} />
+    return (
+      <RunEnd
+        state={state}
+        won={true}
+        isDaily={isDaily}
+        onRetry={() => navigate('/class-select')}
+        onLeaderboard={() => navigate('/leaderboard')}
+        onMenu={() => navigate('/')}
+      />
+    )
   }
 }
 
@@ -499,44 +517,88 @@ function LootScreen({ state, onNext }) {
   )
 }
 
-// ─── Game Over ────────────────────────────────────────────────────────────────
+// ─── Run End (Game Over + Victory) ───────────────────────────────────────────
 
-function GameOver({ state, onRetry, onMenu }) {
-  const { player } = state
+function RunEnd({ state, won, isDaily, onRetry, onLeaderboard, onMenu }) {
+  const { player, dungeon } = state
+  const [name, setName] = useState('')
+  const [submitted, setSubmitted] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [score, setScore] = useState(null)
+
+  async function submitScore() {
+    if (submitting || submitted) return
+    setSubmitting(true)
+    try {
+      const res = await fetch('/api/leaderboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim() || 'Anonym',
+          class: player.class,
+          floor: player.floor,
+          xp: player.xp,
+          gold: player.gold,
+          seed: dungeon.seed,
+          isDaily,
+        }),
+      })
+      const data = await res.json()
+      setScore(data.score)
+      setSubmitted(true)
+    } catch {
+      // backend not reachable – still let the player continue
+      setSubmitted(true)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-6 px-6 bg-dungeon safe-top safe-bottom">
-      <div className="text-5xl">💀</div>
-      <div className="pixel text-red-500 text-sm">TOD</div>
-      <div className="text-center text-gray-400 text-sm">
+    <div className="flex flex-col items-center justify-center h-full gap-5 px-6 bg-dungeon safe-top safe-bottom">
+      <div className="text-5xl">{won ? '🏅' : '💀'}</div>
+      <div className={`pixel text-sm ${won ? 'text-gold-light' : 'text-red-500'}`}>
+        {won ? 'DUNGEON BEZWUNGEN!' : 'TOD'}
+      </div>
+
+      <div className="text-center text-gray-400 text-sm leading-relaxed">
         <div>Etage {player.floor}</div>
         <div>{player.xp} XP · {player.gold} Gold</div>
+        {score != null && <div className="text-gold pixel text-xs mt-1">Score: {score}</div>}
       </div>
-      <div className="flex flex-col gap-3 w-full max-w-xs">
-        <button onClick={onRetry} className="py-4 pixel text-xs border-2 border-gold text-gold active:scale-95">
-          NOCHMAL
-        </button>
-        <button onClick={onMenu} className="py-4 pixel text-xs border border-dungeon-border text-gray-500 active:scale-95">
-          HAUPTMENÜ
-        </button>
-      </div>
-    </div>
-  )
-}
 
-// ─── Victory Run ──────────────────────────────────────────────────────────────
-
-function VictoryRun({ state, onMenu }) {
-  const { player } = state
-  return (
-    <div className="flex flex-col items-center justify-center h-full gap-6 px-6 bg-dungeon safe-top safe-bottom">
-      <div className="text-5xl">🏅</div>
-      <div className="pixel text-gold-light text-sm text-center">DUNGEON<br />BEZWUNGEN!</div>
-      <div className="text-center text-gray-300 text-sm">
-        <div>{player.xp} XP · {player.gold} Gold</div>
-      </div>
-      <button onClick={onMenu} className="py-4 w-full max-w-xs pixel text-xs border-2 border-gold text-gold active:scale-95">
-        HAUPTMENÜ
-      </button>
+      {!submitted ? (
+        <div className="flex flex-col gap-3 w-full max-w-xs">
+          <input
+            type="text"
+            maxLength={20}
+            placeholder="Dein Name (optional)"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && submitScore()}
+            className="w-full px-4 py-3 bg-dungeon-dark border border-dungeon-border text-white text-sm placeholder-gray-600 focus:outline-none focus:border-gold"
+          />
+          <button
+            onClick={submitScore}
+            disabled={submitting}
+            className="py-4 pixel text-xs border-2 border-gold bg-dungeon-gold text-dungeon-black active:scale-95 disabled:opacity-50"
+          >
+            {submitting ? 'SPEICHERT...' : 'SCORE EINTRAGEN'}
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3 w-full max-w-xs">
+          <button onClick={onLeaderboard} className="py-4 pixel text-xs border-2 border-gold text-gold active:scale-95">
+            BESTENLISTE
+          </button>
+          <button onClick={onRetry} className="py-4 pixel text-xs border border-dungeon-border text-gray-400 active:scale-95">
+            NOCHMAL
+          </button>
+          <button onClick={onMenu} className="py-4 pixel text-xs text-gray-600 active:scale-95">
+            HAUPTMENÜ
+          </button>
+        </div>
+      )}
     </div>
   )
 }
