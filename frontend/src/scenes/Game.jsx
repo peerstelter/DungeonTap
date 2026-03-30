@@ -78,11 +78,15 @@ function reducer(state, action) {
       if (combat.phase === 'victory') {
         const xpGain = state.combat.monster.xp
         const goldGain = rollLootGold(state.combat.monster)
-        // carry over HP damage taken during the fight
         const player = { ...state.player, hp: combat.player.hp, xp: state.player.xp + xpGain, gold: state.player.gold + goldGain, kills: state.player.kills + 1 }
-        return { ...state, phase: 'loot', combat, player, lastLoot: { xp: xpGain, gold: goldGain } }
+        // go through monster_dying phase first so the death animation can play
+        return { ...state, phase: 'monster_dying', combat, player, lastLoot: { xp: xpGain, gold: goldGain } }
       }
       return { ...state, combat }
+    }
+
+    case 'CONFIRM_KILL': {
+      return { ...state, phase: 'loot' }
     }
 
     case 'BLOCK_INPUT': {
@@ -291,11 +295,13 @@ export default function Game() {
   if (state.phase === 'dungeon_map') {
     return <DungeonMap state={state} onEnter={() => dispatch({ type: 'ENTER_ROOM' })} onQuit={() => navigate('/')} />
   }
-  if (state.phase === 'combat') {
+  if (state.phase === 'combat' || state.phase === 'monster_dying') {
     return (
       <CombatScreen
         state={state}
         swipeZoneRef={swipeZoneRef}
+        dying={state.phase === 'monster_dying'}
+        onDeathDone={() => dispatch({ type: 'CONFIRM_KILL' })}
         onSpecial={(timingBonus) => dispatch({ type: 'PLAYER_ACTION', action: 'special', timingBonus })}
       />
     )
@@ -425,11 +431,14 @@ function DungeonMap({ state, onEnter, onQuit }) {
 
 const SWEET_SPOT = 18
 
-function CombatScreen({ state, swipeZoneRef, onSpecial }) {
+function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDone }) {
   const { combat, player } = state
   const { monster, phase, pendingEnemyMove, specialBar } = combat
   const atk = pendingEnemyMove ? ATTACK_LABELS[pendingEnemyMove] : null
   const specialReady = specialBar >= 100 && phase === 'player_turn'
+
+  // Play monster death sound once when dying starts
+  useEffect(() => { if (dying) sfx.monsterDeath() }, [dying])
 
   // Hit flash states
   const [monsterFlash, setMonsterFlash] = useState(false)
@@ -549,12 +558,28 @@ function CombatScreen({ state, swipeZoneRef, onSpecial }) {
           </AnimatePresence>
         </div>
 
-        <motion.div
-          animate={phase === 'enemy_telegraph' ? { x: [0, -8, 8, -8, 0] } : {}}
-          transition={{ duration: 0.35 }}
-        >
-          <MonsterSprite id={monster.id} size={96} flash={monsterFlash} />
-        </motion.div>
+        {dying ? (
+          <motion.div
+            initial={{ scale: 1, opacity: 1, y: 0, rotate: 0 }}
+            animate={{
+              scale:   [1, 1.15, 0.85, 1.2,  0.1, 0],
+              opacity: [1, 1,    1,    0.8,   0.3, 0],
+              y:       [0, -8,   4,    -12,   20,  50],
+              rotate:  [0, -8,   8,    -15,   20,  0],
+            }}
+            transition={{ duration: 0.75, ease: 'easeIn' }}
+            onAnimationComplete={onDeathDone}
+          >
+            <MonsterSprite id={monster.id} size={96} flash />
+          </motion.div>
+        ) : (
+          <motion.div
+            animate={phase === 'enemy_telegraph' ? { x: [0, -8, 8, -8, 0] } : {}}
+            transition={{ duration: 0.35 }}
+          >
+            <MonsterSprite id={monster.id} size={96} flash={monsterFlash} />
+          </motion.div>
+        )}
 
         <div className="pixel text-white text-xs">{monster.name}</div>
         <div className="w-full max-w-xs">

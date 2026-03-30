@@ -71,4 +71,9 @@ export const sfx = {
       tone({ freq: f, type: 'sawtooth', dur: 0.12, vol: 0.3, delay: d })
     )
   },
+  monsterDeath() {
+    // crunch + descending whoop
+    noise({ dur: 0.1, vol: 0.5, cutoff: 800 })
+    tone({ freq: 350, freqEnd: 60, type: 'sawtooth', dur: 0.35, vol: 0.4, delay: 0.05 })
+  },
 }
