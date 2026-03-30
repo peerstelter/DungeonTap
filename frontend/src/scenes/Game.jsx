@@ -261,6 +261,31 @@ export default function Game() {
     return attachSwipeListener(el, handleSwipe)
   }, [handleSwipe])
 
+  // Keyboard controls (desktop)
+  useEffect(() => {
+    function onKey(e) {
+      if (state.phase !== 'combat') return
+      const combatPhase = state.combat?.phase
+      const specialReady = state.combat?.specialBar >= 100
+
+      if (combatPhase === 'player_turn') {
+        if (e.key === 'ArrowUp')   { e.preventDefault(); dispatch({ type: 'PLAYER_ACTION', action: 'attack' }) }
+        if ((e.key === ' ' || e.key === 'ArrowDown') && specialReady) {
+          e.preventDefault()
+          // fire special — timing bonus handled via cursor in CombatScreen;
+          // for keyboard we can't read the cursor, so dispatch with a flag
+          dispatch({ type: 'PLAYER_ACTION', action: 'special', timingBonus: 1.0, fromKeyboard: true })
+        }
+      }
+      if (combatPhase === 'enemy_telegraph') {
+        if (e.key === 'ArrowLeft')  { e.preventDefault(); dispatch({ type: 'BLOCK_INPUT' }) }
+        if (e.key === 'ArrowRight') { e.preventDefault(); dispatch({ type: 'DODGE_INPUT' }) }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [state.phase, state.combat?.phase, state.combat?.specialBar])
+
   if (state.phase === 'dungeon_map') {
     return <DungeonMap state={state} onEnter={() => dispatch({ type: 'ENTER_ROOM' })} onQuit={() => navigate('/')} />
   }
@@ -453,10 +478,10 @@ function CombatScreen({ state, swipeZoneRef, onSpecial }) {
         className="flex-1 flex flex-col items-center justify-center cursor-pointer touch-none"
       >
         <div className="text-gray-700 text-xs pixel text-center leading-loose">
-          {phase === 'player_turn' && !specialReady && <>↑ Angriff</>}
-          {phase === 'player_turn' && specialReady  && <span className="text-purple-300 animate-pulse">SPEZIAL BEREIT – JETZT TIPPEN!</span>}
-          {phase === 'enemy_telegraph' && !atk?.warn && <span className="text-gray-500">← Block &nbsp;&nbsp; → Dodge</span>}
-          {phase === 'enemy_telegraph' &&  atk?.warn && <span className="text-red-400 animate-pulse">← BLOCKEN! (nicht ausweichbar)</span>}
+          {phase === 'player_turn' && !specialReady && <>↑ Angriff <span className="text-gray-800">/ [↑]</span></>}
+          {phase === 'player_turn' && specialReady  && <span className="text-purple-300 animate-pulse">SPEZIAL BEREIT!<br/>Tippen / [Leertaste]</span>}
+          {phase === 'enemy_telegraph' && !atk?.warn && <span className="text-gray-500">← Block [←] &nbsp;&nbsp; → Dodge [→]</span>}
+          {phase === 'enemy_telegraph' &&  atk?.warn && <span className="text-red-400 animate-pulse">← BLOCKEN! [←]<br/>(nicht ausweichbar)</span>}
         </div>
       </div>
 

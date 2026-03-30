@@ -28,7 +28,7 @@ export function applyPlayerAction(state, action) {
       const dmg = Math.max(1, player.atk - Math.floor(monster.def * 0.5) + randInt(-2, 3))
       monster = { ...monster, hp: monster.hp - dmg }
       log = [...log, { type: 'player_attack', dmg }]
-      specialBar = Math.min(100, specialBar + 14)
+      specialBar = Math.min(100, specialBar + 22)
       break
     }
     case 'special': {
