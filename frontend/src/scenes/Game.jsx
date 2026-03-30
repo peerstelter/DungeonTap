@@ -74,7 +74,8 @@ function reducer(state, action) {
       if (combat.phase === 'victory') {
         const xpGain = state.combat.monster.xp
         const goldGain = rollLootGold(state.combat.monster)
-        const player = { ...state.player, xp: state.player.xp + xpGain, gold: state.player.gold + goldGain }
+        // carry over HP damage taken during the fight
+        const player = { ...state.player, hp: combat.player.hp, xp: state.player.xp + xpGain, gold: state.player.gold + goldGain }
         return { ...state, phase: 'loot', combat, player, lastLoot: { xp: xpGain, gold: goldGain } }
       }
       return { ...state, combat }
