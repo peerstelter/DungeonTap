@@ -41,12 +41,21 @@ function reducer(state, action) {
       }
       if (room.type === 'rest') {
         const heal = Math.round(state.player.maxHp * 0.3)
+        const healed = Math.min(state.player.maxHp, state.player.hp + heal) - state.player.hp
         return {
           ...state,
-          phase: 'dungeon_map',
-          dungeon: markCleared(state.dungeon, state.floorIndex),
-          floorIndex: state.floorIndex + 1,
-          player: { ...state.player, floor: state.player.floor + 1, hp: Math.min(state.player.maxHp, state.player.hp + heal) },
+          phase: 'rest',
+          restHeal: healed,
+          player: { ...state.player, hp: state.player.hp + healed },
+        }
+      }
+      if (room.type === 'treasure') {
+        const loot = rollTreasure(state.player.floor)
+        return {
+          ...state,
+          phase: 'treasure',
+          treasureLoot: loot,
+          player: applyTreasure(state.player, loot),
         }
       }
       if (room.type === 'shop') {
@@ -122,6 +131,20 @@ function reducer(state, action) {
       }
     }
 
+    case 'LEAVE_ROOM': {
+      const nextIndex = state.floorIndex + 1
+      if (nextIndex >= state.dungeon.rooms.length) {
+        return { ...state, phase: 'victory_run' }
+      }
+      return {
+        ...state,
+        phase: 'dungeon_map',
+        floorIndex: nextIndex,
+        dungeon: markCleared(state.dungeon, state.floorIndex),
+        player: { ...state.player, floor: state.player.floor + 1 },
+      }
+    }
+
     default:
       return state
   }
@@ -152,6 +175,31 @@ const SHOP_POOL = [
 function rollShopItems(player) {
   const shuffled = [...SHOP_POOL].sort(() => Math.random() - 0.5)
   return shuffled.slice(0, 3)
+}
+
+const TREASURE_POOL = [
+  { type: 'gold',    icon: '💰', label: (v) => `+${v} Gold`,          roll: (floor) => 20 + floor * 8 + Math.floor(Math.random() * 20) },
+  { type: 'heal',    icon: '❤️',  label: (v) => `+${v} HP geheilt`,    roll: (floor) => Math.round(0.4 * (floor * 10 + 50)) },
+  { type: 'atk',     icon: '⚔️', label: (v) => `+${v} Angriff`,       roll: () => 3 + Math.floor(Math.random() * 4) },
+  { type: 'def',     icon: '🛡️', label: (v) => `+${v} Verteidigung`,  roll: () => 2 + Math.floor(Math.random() * 3) },
+  { type: 'max_hp',  icon: '💗', label: (v) => `+${v} Max-HP`,        roll: () => 10 + Math.floor(Math.random() * 16) },
+]
+
+function rollTreasure(floor) {
+  const entry = TREASURE_POOL[Math.floor(Math.random() * TREASURE_POOL.length)]
+  const value = entry.roll(floor)
+  return { type: entry.type, icon: entry.icon, label: entry.label(value), value }
+}
+
+function applyTreasure(player, loot) {
+  switch (loot.type) {
+    case 'gold':   return { ...player, gold: player.gold + loot.value }
+    case 'heal':   return { ...player, hp: Math.min(player.maxHp, player.hp + loot.value) }
+    case 'atk':    return { ...player, atk: player.atk + loot.value }
+    case 'def':    return { ...player, def: player.def + loot.value }
+    case 'max_hp': return { ...player, maxHp: player.maxHp + loot.value, hp: Math.min(player.maxHp + loot.value, player.hp + loot.value) }
+    default:       return player
+  }
 }
 
 function applyItemEffect(player, item) {
@@ -221,6 +269,12 @@ export default function Game() {
   }
   if (state.phase === 'loot') {
     return <LootScreen state={state} onNext={() => dispatch({ type: 'NEXT_FLOOR' })} />
+  }
+  if (state.phase === 'rest') {
+    return <RestScreen state={state} onNext={() => dispatch({ type: 'LEAVE_ROOM' })} />
+  }
+  if (state.phase === 'treasure') {
+    return <TreasureScreen state={state} onNext={() => dispatch({ type: 'LEAVE_ROOM' })} />
   }
   if (state.phase === 'shop') {
     return (
@@ -484,6 +538,58 @@ function ShopScreen({ state, onBuy, onLeave }) {
         className="mt-6 py-4 pixel text-sm border-2 border-dungeon-border text-gray-400 active:scale-95 hover:border-gray-500"
       >
         WEITERZIEHEN →
+      </button>
+    </div>
+  )
+}
+
+// ─── Rest Screen ─────────────────────────────────────────────────────────────
+
+function RestScreen({ state, onNext }) {
+  const { player, restHeal } = state
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-6 px-6 bg-dungeon safe-top safe-bottom">
+      <div className="text-6xl">🔥</div>
+      <div className="pixel text-gold text-sm">LAGERFEUER</div>
+      <p className="text-gray-400 text-sm text-center">Du rastest kurz und verbindest deine Wunden.</p>
+      <div className="flex flex-col items-center gap-2">
+        <div className="text-3xl">❤️</div>
+        <div className="pixel text-xs text-green-400">+{restHeal} HP geheilt</div>
+        <div className="text-gray-500 text-xs">{player.hp} / {player.maxHp} HP</div>
+      </div>
+      <button
+        onClick={onNext}
+        className="w-full max-w-xs py-4 pixel text-sm border-2 border-gold bg-dungeon-gold text-dungeon-black active:scale-95"
+      >
+        WEITER →
+      </button>
+    </div>
+  )
+}
+
+// ─── Treasure Screen ──────────────────────────────────────────────────────────
+
+function TreasureScreen({ state, onNext }) {
+  const { treasureLoot } = state
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-6 px-6 bg-dungeon safe-top safe-bottom">
+      <div className="text-6xl">💰</div>
+      <div className="pixel text-gold text-sm">SCHATZ!</div>
+      <p className="text-gray-400 text-sm text-center">Du entdeckst eine vergessene Truhe im Dunkel.</p>
+      <motion.div
+        initial={{ scale: 0.6, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ type: 'spring', stiffness: 260, damping: 16 }}
+        className="flex flex-col items-center gap-2 border-2 border-gold px-8 py-5 bg-dungeon-gray"
+      >
+        <div className="text-4xl">{treasureLoot?.icon}</div>
+        <div className="pixel text-xs text-gold-light mt-1">{treasureLoot?.label}</div>
+      </motion.div>
+      <button
+        onClick={onNext}
+        className="w-full max-w-xs py-4 pixel text-sm border-2 border-gold bg-dungeon-gold text-dungeon-black active:scale-95"
+      >
+        WEITER →
       </button>
     </div>
   )
