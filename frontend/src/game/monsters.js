@@ -160,6 +160,34 @@ export const FLOOR_ENCOUNTERS = [
   { floors: [14, 99], pool: ['dragon_whelp', 'vampire', 'boss_dragon'] },
 ]
 
+// Elite rooms: same pool as normal but ×1.5 stats + 1.5× XP/gold + rage attack injected
+export function getEliteMonsterForFloor(floor) {
+  const entry = FLOOR_ENCOUNTERS.findLast(e => floor >= e.floors[0]) ?? FLOOR_ENCOUNTERS[0]
+  const id = entry.pool[Math.floor(Math.random() * entry.pool.length)]
+  const base = MONSTERS[id]
+  const scale = Math.min(2.0, 1 + (floor - 1) * 0.07) * 1.5  // Elite: 1.5× on top of floor scaling
+  const xpScale = Math.min(2.5, 1 + (floor - 1) * 0.08) * 1.5
+  // Inject rage into attack pattern if not already present
+  const pattern = base.attackPattern.includes('rage')
+    ? base.attackPattern
+    : [...base.attackPattern, 'rage']
+  return {
+    ...base,
+    name: `Elite-${base.name}`,
+    isElite: true,
+    hp:    Math.round(base.hp * scale),
+    maxHp: Math.round(base.hp * scale),
+    atk:   Math.round(base.atk * scale),
+    def:   Math.round(base.def * scale),
+    xp:    Math.round(base.xp * xpScale),
+    loot:  base.loot.map(l => l.item === 'gold'
+      ? { ...l, amount: [Math.round(l.amount[0] * 1.5), Math.round(l.amount[1] * 1.5)] }
+      : l
+    ),
+    attackPattern: pattern,
+  }
+}
+
 export function getMonsterForFloor(floor, isBoss = false) {
   if (isBoss) {
     const base = MONSTERS.boss_dragon

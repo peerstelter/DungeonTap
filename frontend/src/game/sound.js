@@ -72,8 +72,29 @@ export const sfx = {
     )
   },
   monsterDeath() {
-    // crunch + descending whoop
     noise({ dur: 0.1, vol: 0.5, cutoff: 800 })
     tone({ freq: 350, freqEnd: 60, type: 'sawtooth', dur: 0.35, vol: 0.4, delay: 0.05 })
+  },
+  bossIntro() {
+    // Ominous low drone + three impact hits
+    tone({ freq: 55,  type: 'sawtooth', dur: 1.2,  vol: 0.35 })
+    tone({ freq: 110, type: 'sawtooth', dur: 0.8,  vol: 0.20, delay: 0.1 })
+    noise({ dur: 0.18, vol: 0.6, cutoff: 200, delay: 0.5 })
+    noise({ dur: 0.18, vol: 0.6, cutoff: 200, delay: 0.85 })
+    noise({ dur: 0.25, vol: 0.7, cutoff: 150, delay: 1.1 })
+    tone({ freq: 80, freqEnd: 40, type: 'square', dur: 0.5, vol: 0.4, delay: 1.2 })
+  },
+  event() {
+    tone({ freq: 660,  type: 'sine', dur: 0.08, vol: 0.2 })
+    tone({ freq: 880,  type: 'sine', dur: 0.1,  vol: 0.2, delay: 0.07 })
+    tone({ freq: 1100, type: 'sine', dur: 0.12, vol: 0.15, delay: 0.15 })
+  },
+  trap() {
+    noise({ dur: 0.06, vol: 0.6, cutoff: 1200 })
+    tone({ freq: 220, freqEnd: 110, type: 'sawtooth', dur: 0.2, vol: 0.35, delay: 0.04 })
+  },
+  shieldCounter() {
+    tone({ freq: 800, freqEnd: 400, type: 'square',   dur: 0.08, vol: 0.4 })
+    tone({ freq: 180, freqEnd: 100, type: 'sawtooth', dur: 0.15, vol: 0.45, delay: 0.06 })
   },
 }

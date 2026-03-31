@@ -2,7 +2,7 @@ import { useState, useEffect, useReducer, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CLASSES } from '../game/classes'
-import { getMonsterForFloor } from '../game/monsters'
+import { getMonsterForFloor, getEliteMonsterForFloor } from '../game/monsters'
 import { generateDungeon, getDailySeed, ROOM_TYPES } from '../game/dungeon'
 import { createCombatState, applyPlayerAction, applyBlock, applyDodge, resolveEnemyAttack, ATTACK_LABELS } from '../game/combat'
 import { attachSwipeListener } from '../game/swipe'
@@ -36,7 +36,27 @@ function rollPerks(count = 3, activePerks = []) {
   return shuffled.slice(0, count).map(p => p.id)
 }
 
-// ─── Init & State ─────────────────────────────────────────────────────────────
+// ─── Events & Traps ───────────────────────────────────────────────────────────
+
+export const EVENTS = [
+  { id: 'healing_spring', icon: '💧', title: 'Heilquelle',       text: 'Eine magische Quelle sprudelt aus dem Fels.',    apply: p => ({ ...p, hp: Math.min(p.maxHp, p.hp + Math.round(p.maxHp * 0.25)) }), reward: '+25% HP' },
+  { id: 'ancient_tome',   icon: '📖', title: 'Uraltes Buch',     text: 'Du liest schnell ein paar Seiten. Weisheit strömt ein.', apply: p => ({ ...p, xp: p.xp + 40 }), reward: '+40 XP' },
+  { id: 'gold_stash',     icon: '💰', title: 'Verborgenes Gold', text: 'Hinter einem losen Stein schimmert es golden.', apply: p => ({ ...p, gold: p.gold + 35 }), reward: '+35 Gold' },
+  { id: 'weapon_grind',   icon: '⚒️', title: 'Schleifstein',    text: 'Du wetze deine Waffe auf einem alten Stein.', apply: p => ({ ...p, atk: p.atk + 4 }), reward: '+4 ATK' },
+  { id: 'iron_rations',   icon: '🍖', title: 'Eiserne Rationen', text: 'Stale but nutritious. You feel a bit tougher.', apply: p => ({ ...p, def: p.def + 3 }), reward: '+3 DEF' },
+  { id: 'cursed_idol',    icon: '🗿', title: 'Verfluchtes Idol', text: 'Eine häßliche Statue... du spürst dunkle Energie.', apply: p => ({ ...p, hp: Math.max(1, p.hp - Math.round(p.maxHp * 0.12)) }), reward: '-12% HP' },
+  { id: 'mysterious_fog', icon: '🌫️', title: 'Mystischer Nebel', text: 'Der Nebel füllt deine Seele mit neuer Energie.',   apply: p => ({ ...p, xp: p.xp + 25, gold: p.gold + 15 }), reward: '+25 XP, +15 Gold' },
+]
+
+export const TRAPS = [
+  { id: 'spike_pit',     icon: '🔩', title: 'Stachelgrube',  text: 'Der Boden gibt nach — Stacheln schießen empor!', damage: 0.20 },
+  { id: 'poison_dart',   icon: '🎯', title: 'Giftpfeil',     text: 'Ein Klick. Ein Pfeil schnellt aus der Wand!',     damage: 0.15 },
+  { id: 'falling_rocks', icon: '🪨', title: 'Steinschlag',   text: 'Die Decke bricht — Felsbrocken prasseln nieder!', damage: 0.25 },
+  { id: 'fire_jet',      icon: '🔥', title: 'Feuerstoß',     text: 'Eine verborgene Rune zündet — Flammen!',          damage: 0.18 },
+]
+
+function rollEvent() { return EVENTS[Math.floor(Math.random() * EVENTS.length)] }
+function rollTrap()  { return TRAPS[Math.floor(Math.random() * TRAPS.length)] }
 
 // ─── Daily Hero Persistence ───────────────────────────────────────────────────
 // Daily runs keep level/perks/stats across attempts; only HP resets each try.
@@ -124,10 +144,31 @@ function reducer(state, action) {
   switch (action.type) {
     case 'ENTER_ROOM': {
       const room = state.dungeon.rooms[state.floorIndex]
-      if (room.type === 'combat' || room.type === 'boss') {
-        const monster = getMonsterForFloor(state.player.floor, room.type === 'boss')
+      if (room.type === 'combat') {
+        const monster = getMonsterForFloor(state.player.floor)
         const combat = createCombatState(state.player, monster)
         return { ...state, phase: 'combat', combat }
+      }
+      if (room.type === 'elite') {
+        const monster = getEliteMonsterForFloor(state.player.floor)
+        const combat = createCombatState(state.player, monster)
+        return { ...state, phase: 'combat', combat }
+      }
+      if (room.type === 'boss') {
+        const monster = getMonsterForFloor(state.player.floor, true)
+        const combat = createCombatState(state.player, monster)
+        return { ...state, phase: 'boss_intro', combat }
+      }
+      if (room.type === 'event') {
+        const event = rollEvent()
+        const player = event.apply(state.player)
+        return { ...state, phase: 'event', currentEvent: event, player }
+      }
+      if (room.type === 'trap') {
+        const trap = rollTrap()
+        const dmg = Math.round(state.player.maxHp * trap.damage)
+        const player = { ...state.player, hp: Math.max(1, state.player.hp - dmg) }
+        return { ...state, phase: 'trap', currentTrap: trap, trapDmg: dmg, player }
       }
       if (room.type === 'rest') {
         const heal = Math.round(state.player.maxHp * 0.3)
@@ -196,6 +237,10 @@ function reducer(state, action) {
 
     case 'NEXT_FLOOR': {
       return advanceFloor(state)
+    }
+
+    case 'DISMISS_BOSS_INTRO': {
+      return { ...state, phase: 'combat' }
     }
 
     case 'DISMISS_LEVEL_UP': {
@@ -460,6 +505,20 @@ function GameInner({ playerClass, seed, isDaily, savedHero }) {
       />
     )
   }
+  if (state.phase === 'boss_intro') {
+    return (
+      <BossIntroScreen
+        state={state}
+        onFight={() => dispatch({ type: 'DISMISS_BOSS_INTRO' })}
+      />
+    )
+  }
+  if (state.phase === 'event') {
+    return <EventScreen state={state} onNext={() => dispatch({ type: 'LEAVE_ROOM' })} />
+  }
+  if (state.phase === 'trap') {
+    return <TrapScreen state={state} onNext={() => dispatch({ type: 'LEAVE_ROOM' })} />
+  }
   if (state.phase === 'game_over') {
     return (
       <RunEnd
@@ -634,6 +693,15 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
       case 'player_dodged':
         addFloat('DODGE!', 'text-green-400', false)
         break
+      case 'shield_counter':
+        setPlayerFlash(true)
+        setTimeout(() => setPlayerFlash(false), 200)
+        sfx.shieldCounter()
+        addFloat(`🛡 -${entry.dmg}`, 'text-cyan-400', false)
+        break
+      case 'shield_counter_dmg':
+        addFloat(`⚡ -${entry.dmg}`, 'text-cyan-300', true)
+        break
       default: break
     }
 
@@ -730,7 +798,15 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
           </motion.div>
         )}
 
-        <div className="pixel text-white text-xs">{monster.name}</div>
+        <div className="flex items-center gap-2">
+          {monster.isElite && (
+            <span className="pixel text-xs text-red-400 border border-red-800 px-1 py-0.5 bg-red-950/50">ELITE</span>
+          )}
+          {monster.isBoss && (
+            <span className="pixel text-xs text-yellow-400 border border-yellow-700 px-1 py-0.5 bg-yellow-950/50 animate-pulse">BOSS</span>
+          )}
+          <div className="pixel text-white text-xs">{monster.name}</div>
+        </div>
         <div className="w-full max-w-xs">
           <HpBar hp={monster.hp} maxHp={monster.maxHp} color="bg-red-700" />
         </div>
@@ -836,13 +912,15 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
 
 function LogEntry({ entry }) {
   switch (entry.type) {
-    case 'player_attack':   return <>Du triffst für <span className="text-orange-400">{entry.dmg}</span> Schaden</>
-    case 'player_special':  return <>{entry.perfect ? '✨ PERFEKT! ' : ''}<span className="text-purple-400">{entry.dmg}</span> Spezialschaden</>
-    case 'player_dodge':    return <span className="text-green-400">Ausgewichen!</span>
-    case 'player_blocked':  return <>Geblockt! Nur <span className="text-blue-400">{entry.dmg}</span> Schaden</>
-    case 'player_dodged':   return <span className="text-green-400">Perfekt ausgewichen!</span>
-    case 'player_grazed':   return <>Treffer! Ausweichen half wenig – <span className="text-yellow-500">{entry.dmg}</span> Schaden</>
-    case 'enemy_attack':    return <>Gegner trifft dich für <span className="text-red-400">{entry.dmg}</span></>
+    case 'player_attack':       return <>Du triffst für <span className="text-orange-400">{entry.dmg}</span> Schaden</>
+    case 'player_special':      return <>{entry.perfect ? '✨ PERFEKT! ' : ''}<span className="text-purple-400">{entry.dmg}</span> Spezialschaden</>
+    case 'player_dodge':        return <span className="text-green-400">Ausgewichen!</span>
+    case 'player_blocked':      return <>Geblockt! Nur <span className="text-blue-400">{entry.dmg}</span> Schaden</>
+    case 'player_dodged':       return <span className="text-green-400">Perfekt ausgewichen!</span>
+    case 'player_grazed':       return <>Treffer! Ausweichen half wenig – <span className="text-yellow-500">{entry.dmg}</span> Schaden</>
+    case 'enemy_attack':        return <>Gegner trifft dich für <span className="text-red-400">{entry.dmg}</span></>
+    case 'shield_counter':      return <><span className="text-cyan-400">🛡 SCHILDBLOCK!</span> Nur <span className="text-blue-400">{entry.dmg}</span> Schaden</>
+    case 'shield_counter_dmg':  return <><span className="text-cyan-300">⚡ Konter!</span> Gegner nimmt <span className="text-cyan-400">{entry.dmg}</span> Schaden</>
     default: return null
   }
 }
@@ -1048,6 +1126,198 @@ function LevelUpScreen({ state, onPick }) {
           </motion.button>
         ))}
       </div>
+    </div>
+  )
+}
+
+// ─── Boss Intro Screen ────────────────────────────────────────────────────────
+
+function BossIntroScreen({ state, onFight }) {
+  const { combat } = state
+  const monster = combat?.monster
+
+  useEffect(() => { sfx.bossIntro() }, [])
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-6 px-6 bg-dungeon safe-top safe-bottom overflow-hidden">
+      {/* Dark vignette backdrop */}
+      <motion.div
+        className="absolute inset-0 bg-red-950/30 pointer-events-none"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 1.5 }}
+      />
+
+      {/* Boss icon */}
+      <motion.div
+        initial={{ scale: 0.2, opacity: 0, rotate: -20 }}
+        animate={{ scale: 1, opacity: 1, rotate: 0 }}
+        transition={{ type: 'spring', stiffness: 160, damping: 12, delay: 0.3 }}
+        className="text-8xl"
+      >
+        🔥
+      </motion.div>
+
+      {/* Warning flash */}
+      <motion.div
+        className="pixel text-red-500 text-xs tracking-widest"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: [0, 1, 0, 1, 0, 1] }}
+        transition={{ delay: 0.6, duration: 1.2 }}
+      >
+        ⚠ BOSS ENCOUNTER ⚠
+      </motion.div>
+
+      {/* Boss name */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 1.0 }}
+        className="text-center"
+      >
+        <div className="pixel text-gold text-lg leading-tight">{monster?.name}</div>
+        <div className="text-gray-500 text-xs mt-2">
+          HP: {monster?.hp} · ATK: {monster?.atk} · DEF: {monster?.def}
+        </div>
+      </motion.div>
+
+      {/* Ominous flavour text */}
+      <motion.p
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 1.4 }}
+        className="text-gray-600 text-xs text-center max-w-xs leading-relaxed"
+      >
+        Ein uraltes Böses erwacht. Der Boden bebt. Bereite dich auf den Kampf deines Lebens vor.
+      </motion.p>
+
+      {/* Fight button */}
+      <motion.button
+        initial={{ opacity: 0, scale: 0.8 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ delay: 1.8, type: 'spring' }}
+        whileTap={{ scale: 0.96 }}
+        onClick={onFight}
+        className="w-full max-w-xs py-5 pixel text-sm border-2 border-red-600 bg-red-950 text-red-200 active:bg-red-900"
+      >
+        KÄMPFEN →
+      </motion.button>
+    </div>
+  )
+}
+
+// ─── Event Screen ─────────────────────────────────────────────────────────────
+
+function EventScreen({ state, onNext }) {
+  const { currentEvent, player } = state
+  useEffect(() => { sfx.event() }, [])
+
+  const isPositive = currentEvent?.reward && !currentEvent.reward.startsWith('-')
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-6 px-6 bg-dungeon safe-top safe-bottom">
+      {/* Icon */}
+      <motion.div
+        initial={{ scale: 0.5, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ type: 'spring', stiffness: 260, damping: 14 }}
+        className="text-7xl"
+      >
+        {currentEvent?.icon}
+      </motion.div>
+
+      <div className="pixel text-purple-300 text-sm">{currentEvent?.title}</div>
+
+      <p className="text-gray-400 text-sm text-center max-w-xs leading-relaxed">
+        {currentEvent?.text}
+      </p>
+
+      {/* Reward badge */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.3 }}
+        className={`flex items-center gap-3 border-2 px-6 py-4 ${
+          isPositive
+            ? 'border-green-800 bg-green-950/50'
+            : 'border-red-900 bg-red-950/50'
+        }`}
+      >
+        <span className="text-2xl">{isPositive ? '✨' : '💀'}</span>
+        <span className={`pixel text-xs ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+          {currentEvent?.reward}
+        </span>
+      </motion.div>
+
+      {/* HP bar after event */}
+      <div className="w-full max-w-xs">
+        <HpBar hp={player.hp} maxHp={player.maxHp} />
+      </div>
+
+      <button
+        onClick={onNext}
+        className="w-full max-w-xs py-4 pixel text-sm border-2 border-purple-700 bg-purple-950 text-purple-200 active:scale-95"
+      >
+        WEITER →
+      </button>
+    </div>
+  )
+}
+
+// ─── Trap Screen ──────────────────────────────────────────────────────────────
+
+function TrapScreen({ state, onNext }) {
+  const { currentTrap, trapDmg, player } = state
+  useEffect(() => { sfx.trap() }, [])
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-6 px-6 bg-dungeon safe-top safe-bottom">
+      {/* Screen flash */}
+      <motion.div
+        className="fixed inset-0 bg-orange-900 pointer-events-none"
+        initial={{ opacity: 0.6 }}
+        animate={{ opacity: 0 }}
+        transition={{ duration: 0.5 }}
+      />
+
+      <motion.div
+        initial={{ scale: 0.4, opacity: 0, rotate: 15 }}
+        animate={{ scale: 1, opacity: 1, rotate: 0 }}
+        transition={{ type: 'spring', stiffness: 300, damping: 12 }}
+        className="text-7xl"
+      >
+        {currentTrap?.icon}
+      </motion.div>
+
+      <div className="pixel text-orange-400 text-sm">FALLE!</div>
+      <div className="pixel text-white text-xs">{currentTrap?.title}</div>
+
+      <p className="text-gray-400 text-sm text-center max-w-xs leading-relaxed">
+        {currentTrap?.text}
+      </p>
+
+      {/* Damage badge */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.8 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ delay: 0.2, type: 'spring' }}
+        className="flex items-center gap-3 border-2 border-red-900 bg-red-950/50 px-6 py-4"
+      >
+        <span className="text-2xl">💔</span>
+        <span className="pixel text-xs text-red-400">-{trapDmg} HP</span>
+      </motion.div>
+
+      {/* HP bar after trap */}
+      <div className="w-full max-w-xs">
+        <HpBar hp={player.hp} maxHp={player.maxHp} />
+      </div>
+
+      <button
+        onClick={onNext}
+        className="w-full max-w-xs py-4 pixel text-sm border-2 border-orange-800 bg-orange-950 text-orange-200 active:scale-95"
+      >
+        WEITER →
+      </button>
     </div>
   )
 }

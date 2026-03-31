@@ -36,20 +36,28 @@ export function generateDungeon(seed) {
 }
 
 function pickRoomType(rng, floor, total) {
+  // Fixed rooms
   if (floor === total) return 'boss'
   if (floor % 5 === 0) return 'shop'
+  // Elite every 3rd floor (after floor 3), guaranteed challenge
+  if (floor > 3 && floor % 3 === 0) return 'elite'
 
   const roll = rng()
-  if (roll < 0.6) return 'combat'
-  if (roll < 0.8) return 'combat' // still combat but could be elite later
-  if (roll < 0.92) return 'rest'
+  if (roll < 0.48) return 'combat'
+  if (roll < 0.60) return 'elite'
+  if (roll < 0.70) return 'event'
+  if (roll < 0.76) return 'trap'
+  if (roll < 0.88) return 'rest'
   return 'treasure'
 }
 
 export const ROOM_TYPES = {
   combat:   { label: 'Kampf',    icon: '⚔️' },
+  elite:    { label: 'Elite',    icon: '💢' },
   rest:     { label: 'Rast',     icon: '🔥' },
   treasure: { label: 'Schatz',   icon: '💰' },
   shop:     { label: 'Händler',  icon: '🏪' },
-  boss:     { label: 'Boss',     icon: '💀' },
+  event:    { label: 'Ereignis', icon: '❓' },
+  trap:     { label: 'Falle',    icon: '⚠️' },
+  boss:     { label: 'BOSS',     icon: '💀' },
 }
