@@ -13,7 +13,7 @@ router.get('/', (req, res) => {
   if (type === 'daily') {
     const today = new Date().toISOString().slice(0, 10)
     rows = db.prepare(`
-      SELECT id, name, class, floor, xp, gold, score
+      SELECT id, name, class, floor, xp, gold, kills, level, score, created_at
       FROM runs
       WHERE is_daily = 1 AND daily_date = ?
       ORDER BY score DESC
@@ -21,7 +21,7 @@ router.get('/', (req, res) => {
     `).all(today, MAX_ENTRIES)
   } else {
     rows = db.prepare(`
-      SELECT id, name, class, floor, xp, gold, score
+      SELECT id, name, class, floor, xp, gold, kills, level, score, created_at
       FROM runs
       ORDER BY score DESC
       LIMIT ?
@@ -33,7 +33,7 @@ router.get('/', (req, res) => {
 
 // POST /api/leaderboard
 router.post('/', (req, res) => {
-  const { name, class: cls, floor, xp, gold, seed, isDaily } = req.body
+  const { name, class: cls, floor, xp, gold, kills, level, seed, isDaily } = req.body
 
   if (!cls || !['warrior', 'mage', 'rogue'].includes(cls)) {
     return res.status(400).json({ error: 'Invalid class' })
@@ -42,18 +42,19 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: 'Invalid floor' })
   }
 
-  const score = calcScore(floor, xp, gold)
+  const score = calcScore(floor, xp, gold, kills)
   const playerName = String(name || 'Anonym').slice(0, 20).trim() || 'Anonym'
   const today = new Date().toISOString().slice(0, 10)
 
   const db = getDb()
   const stmt = db.prepare(`
-    INSERT INTO runs (name, class, floor, xp, gold, score, seed, is_daily, daily_date)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO runs (name, class, floor, xp, gold, kills, level, score, seed, is_daily, daily_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const result = stmt.run(
     playerName, cls,
     Math.floor(floor), Math.floor(xp ?? 0), Math.floor(gold ?? 0),
+    Math.floor(kills ?? 0), Math.floor(level ?? 1),
     score,
     seed ?? null,
     isDaily ? 1 : 0,
@@ -63,8 +64,8 @@ router.post('/', (req, res) => {
   res.status(201).json({ id: result.lastInsertRowid, score })
 })
 
-function calcScore(floor, xp, gold) {
-  return Math.round((floor * 100) + (xp ?? 0) * 2 + (gold ?? 0))
+function calcScore(floor, xp, gold, kills) {
+  return Math.round((floor * 100) + (xp ?? 0) * 2 + (gold ?? 0) + (kills ?? 0) * 15)
 }
 
 module.exports = router

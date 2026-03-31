@@ -978,6 +978,8 @@ function RunEnd({ state, won, isDaily, onRetry, onLeaderboard, onMenu }) {
           floor: player.floor,
           xp: player.xp,
           gold: player.gold,
+          kills: player.kills,
+          level: player.level,
           seed: dungeon.seed,
           isDaily,
         }),
@@ -985,6 +987,8 @@ function RunEnd({ state, won, isDaily, onRetry, onLeaderboard, onMenu }) {
       const data = await res.json()
       setScore(data.score)
       setSubmitted(true)
+      // Store run ID so leaderboard can highlight it
+      if (data.id) sessionStorage.setItem('lastRunId', String(data.id))
     } catch {
       // backend not reachable – still let the player continue
       setSubmitted(true)

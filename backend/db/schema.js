@@ -35,6 +35,13 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_runs_score ON runs (score DESC);
     CREATE INDEX IF NOT EXISTS idx_runs_daily ON runs (daily_date, score DESC);
   `)
+
+  // Additive migrations — safe to run on every startup
+  const addColumn = (col, def) => {
+    try { db.exec(`ALTER TABLE runs ADD COLUMN ${col} ${def}`) } catch {}
+  }
+  addColumn('kills', 'INTEGER NOT NULL DEFAULT 0')
+  addColumn('level', 'INTEGER NOT NULL DEFAULT 1')
 }
 
 module.exports = { getDb }
