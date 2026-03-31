@@ -27,6 +27,8 @@ function initRun(playerClass, seed) {
     specialName: cls.specialName,
     gold: 0,
     xp: 0,
+    level: 1,
+    xpToNext: 100,
     floor: 1,
     kills: 0,
     items: [],
@@ -109,17 +111,11 @@ function reducer(state, action) {
     }
 
     case 'NEXT_FLOOR': {
-      const nextIndex = state.floorIndex + 1
-      if (nextIndex >= state.dungeon.rooms.length) {
-        return { ...state, phase: 'victory_run' }
-      }
-      return {
-        ...state,
-        phase: 'dungeon_map',
-        floorIndex: nextIndex,
-        dungeon: markCleared(state.dungeon, state.floorIndex),
-        player: { ...state.player, floor: state.player.floor + 1 },
-      }
+      return advanceFloor(state)
+    }
+
+    case 'DISMISS_LEVEL_UP': {
+      return { ...state, phase: 'dungeon_map' }
     }
 
     case 'BUY_ITEM': {
@@ -131,32 +127,11 @@ function reducer(state, action) {
     }
 
     case 'LEAVE_SHOP': {
-      const nextIndex = state.floorIndex + 1
-      if (nextIndex >= state.dungeon.rooms.length) {
-        return { ...state, phase: 'victory_run' }
-      }
-      return {
-        ...state,
-        phase: 'dungeon_map',
-        floorIndex: nextIndex,
-        dungeon: markCleared(state.dungeon, state.floorIndex),
-        player: { ...state.player, floor: state.player.floor + 1 },
-        shopItems: null,
-      }
+      return { ...advanceFloor(state), shopItems: null }
     }
 
     case 'LEAVE_ROOM': {
-      const nextIndex = state.floorIndex + 1
-      if (nextIndex >= state.dungeon.rooms.length) {
-        return { ...state, phase: 'victory_run' }
-      }
-      return {
-        ...state,
-        phase: 'dungeon_map',
-        floorIndex: nextIndex,
-        dungeon: markCleared(state.dungeon, state.floorIndex),
-        player: { ...state.player, floor: state.player.floor + 1 },
-      }
+      return advanceFloor(state)
     }
 
     default:
@@ -216,6 +191,39 @@ function applyTreasure(player, loot) {
   }
 }
 
+const LEVEL_GAINS = { hp: 15, atk: 4, def: 2 }
+
+function xpNeeded(level) { return level * 80 + 20 }
+
+function checkLevelUp(player) {
+  if (player.xp < player.xpToNext) return { player, didLevel: false }
+  const newLevel = player.level + 1
+  const leveled = {
+    ...player,
+    level: newLevel,
+    xpToNext: xpNeeded(newLevel),
+    maxHp: player.maxHp + LEVEL_GAINS.hp,
+    hp: Math.min(player.maxHp + LEVEL_GAINS.hp, player.hp + LEVEL_GAINS.hp),
+    atk: player.atk + LEVEL_GAINS.atk,
+    def: player.def + LEVEL_GAINS.def,
+  }
+  return { player: leveled, didLevel: true }
+}
+
+function advanceFloor(state) {
+  const nextIndex = state.floorIndex + 1
+  if (nextIndex >= state.dungeon.rooms.length) {
+    return { ...state, phase: 'victory_run' }
+  }
+  const dungeon = markCleared(state.dungeon, state.floorIndex)
+  const basePlayer = { ...state.player, floor: state.player.floor + 1 }
+  const { player, didLevel } = checkLevelUp(basePlayer)
+  if (didLevel) {
+    return { ...state, phase: 'level_up', floorIndex: nextIndex, dungeon, player }
+  }
+  return { ...state, phase: 'dungeon_map', floorIndex: nextIndex, dungeon, player }
+}
+
 function applyItemEffect(player, item) {
   const e = item.effect
   switch (e.type) {
@@ -228,14 +236,36 @@ function applyItemEffect(player, item) {
   }
 }
 
+// Outer shell: fetches daily seed from backend before starting
 export default function Game() {
-  const navigate = useNavigate()
   const [params] = useSearchParams()
   const isDaily = params.get('mode') === 'daily'
-
   const playerClass = sessionStorage.getItem('playerClass') || 'warrior'
-  const seed = isDaily ? getDailySeed() : Math.floor(Math.random() * 0xFFFFFF)
+  const [seed, setSeed] = useState(null)
 
+  useEffect(() => {
+    if (isDaily) {
+      fetch('/api/daily-dungeon/seed')
+        .then(r => r.json())
+        .then(d => setSeed(d.seed))
+        .catch(() => setSeed(getDailySeed()))
+    } else {
+      setSeed(Math.floor(Math.random() * 0xFFFFFF))
+    }
+  }, []) // eslint-disable-line
+
+  if (seed === null) {
+    return (
+      <div className="flex items-center justify-center h-full bg-dungeon">
+        <div className="pixel text-gold text-xs animate-pulse">LADE DUNGEON...</div>
+      </div>
+    )
+  }
+  return <GameInner playerClass={playerClass} seed={seed} isDaily={isDaily} />
+}
+
+function GameInner({ playerClass, seed, isDaily }) {
+  const navigate = useNavigate()
   const [state, dispatch] = useReducer(reducer, null, () => initRun(playerClass, seed))
   const swipeZoneRef = useRef(null)
   const telegraphTimerRef = useRef(null)
@@ -309,6 +339,9 @@ export default function Game() {
   if (state.phase === 'loot') {
     return <LootScreen state={state} onNext={() => dispatch({ type: 'NEXT_FLOOR' })} />
   }
+  if (state.phase === 'level_up') {
+    return <LevelUpScreen state={state} onDismiss={() => dispatch({ type: 'DISMISS_LEVEL_UP' })} />
+  }
   if (state.phase === 'rest') {
     return <RestScreen state={state} onNext={() => dispatch({ type: 'LEAVE_ROOM' })} />
   }
@@ -368,6 +401,8 @@ function DungeonMap({ state, onEnter, onQuit }) {
         <button onClick={onQuit} className="text-gray-600 text-xs pixel">✕ AUFGEBEN</button>
         <div className="pixel text-xs text-center">
           <span className="text-gold-light">ETAGE {player.floor}</span>
+          <span className="text-gray-700 mx-2">·</span>
+          <span className="text-purple-400">LV{player.level}</span>
           <span className="text-gray-700 mx-2">·</span>
           <span className="text-yellow-500">💰 {player.gold}</span>
         </div>
@@ -837,6 +872,86 @@ function LootScreen({ state, onNext }) {
       >
         WEITER →
       </button>
+    </div>
+  )
+}
+
+// ─── Level Up Screen ──────────────────────────────────────────────────────────
+
+function LevelUpScreen({ state, onDismiss }) {
+  const { player } = state
+  useEffect(() => {
+    // Re-use the victory fanfare for level-up feedback
+    sfx.victory()
+  }, [])
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-6 px-6 bg-dungeon safe-top safe-bottom">
+      <motion.div
+        initial={{ scale: 0, rotate: -15 }}
+        animate={{ scale: 1, rotate: 0 }}
+        transition={{ type: 'spring', stiffness: 260, damping: 16 }}
+        className="text-6xl"
+      >
+        ⬆️
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.15 }}
+        className="pixel text-gold text-sm text-center"
+      >
+        LEVEL UP!
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.25 }}
+        className="pixel text-purple-300 text-xs text-center"
+      >
+        LEVEL {player.level}
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.35 }}
+        className="flex flex-col gap-3 w-full max-w-xs"
+      >
+        {[
+          { icon: '❤️',  label: 'Max HP',        gain: `+${LEVEL_GAINS.hp}`,  value: `${player.maxHp} HP`,   color: 'text-green-400' },
+          { icon: '⚔️', label: 'Angriff',         gain: `+${LEVEL_GAINS.atk}`, value: `${player.atk} ATK`,   color: 'text-orange-400' },
+          { icon: '🛡️', label: 'Verteidigung',    gain: `+${LEVEL_GAINS.def}`, value: `${player.def} DEF`,   color: 'text-blue-400' },
+        ].map((s, i) => (
+          <motion.div
+            key={s.label}
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.4 + i * 0.1 }}
+            className="flex items-center gap-4 border border-dungeon-border bg-dungeon-dark px-4 py-3"
+          >
+            <span className="text-xl">{s.icon}</span>
+            <div className="flex-1">
+              <div className="text-gray-400 text-xs">{s.label}</div>
+              <div className={`pixel text-xs mt-0.5 ${s.color}`}>{s.gain}</div>
+            </div>
+            <div className="pixel text-xs text-gray-500">{s.value}</div>
+          </motion.div>
+        ))}
+      </motion.div>
+
+      <motion.button
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.75 }}
+        onClick={onDismiss}
+        whileTap={{ scale: 0.97 }}
+        className="w-full max-w-xs py-4 pixel text-sm border-2 border-gold bg-dungeon-gold text-dungeon-black active:scale-95"
+      >
+        WEITER →
+      </motion.button>
     </div>
   )
 }
