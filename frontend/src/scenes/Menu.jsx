@@ -29,6 +29,7 @@ export default function Menu() {
     installEvt.userChoice.then(() => setInstallEvt(null))
   }
 
+  const profile = JSON.parse(localStorage.getItem('dungeontap_profile') || 'null')
   const today = new Date().toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' })
 
   return (
@@ -89,7 +90,14 @@ export default function Menu() {
         )}
       </motion.div>
 
-      <p className="text-gray-700 text-xs pixel">v0.2.0</p>
+      <div className="flex flex-col items-center gap-1">
+        {profile && (
+          <button onClick={() => navigate('/profile')} className="text-gray-600 text-xs hover:text-gray-400 transition-colors">
+            ✎ {profile.name}
+          </button>
+        )}
+        <p className="text-gray-700 text-xs pixel">v0.3.0</p>
+      </div>
     </div>
   )
 }

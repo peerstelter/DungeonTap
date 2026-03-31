@@ -36,6 +36,15 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_runs_daily ON runs (daily_date, score DESC);
   `)
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      name       TEXT    UNIQUE NOT NULL,
+      pin_hash   TEXT    NOT NULL,
+      created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+  `)
+
   // Additive migrations — safe to run on every startup
   const addColumn = (col, def) => {
     try { db.exec(`ALTER TABLE runs ADD COLUMN ${col} ${def}`) } catch {}

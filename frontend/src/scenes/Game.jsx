@@ -12,6 +12,32 @@ import RoomTile from '../components/RoomTile'
 
 const TELEGRAPH_MS = 850 // time player has to block/dodge before hit lands
 
+// ─── Perk System ──────────────────────────────────────────────────────────────
+
+export const PERKS = [
+  // Stat boosts
+  { id: 'hp_up',     icon: '❤️',  title: '+30 Max HP',         desc: 'Erhöht dein Maximum',               apply: p => ({ ...p, maxHp: p.maxHp + 30, hp: Math.min(p.hp + 30, p.maxHp + 30) }) },
+  { id: 'atk_up',   icon: '⚔️', title: '+8 Angriff',          desc: 'Mehr Schaden pro Treffer',           apply: p => ({ ...p, atk: p.atk + 8 }) },
+  { id: 'def_up',   icon: '🛡️', title: '+6 Verteidigung',     desc: 'Reduziert eingehenden Schaden',      apply: p => ({ ...p, def: p.def + 6 }) },
+  { id: 'heal',     icon: '💊', title: 'Vollheilung',         desc: 'Stellt alle HP wieder her',          apply: p => ({ ...p, hp: p.maxHp }) },
+  { id: 'atk_def',  icon: '⚡', title: '+5 ATK / +4 DEF',    desc: 'Ausgewogener Boost',                 apply: p => ({ ...p, atk: p.atk + 5, def: p.def + 4 }) },
+  // Passives (one-time flags, not repeated)
+  { id: 'lifesteal',icon: '🩸', title: 'Lebensraub',          desc: 'Treffer heilen 8% HP', passive: true, apply: p => ({ ...p, lifesteal: true }) },
+  { id: 'fast_sp',  icon: '💜', title: 'Spezialist',          desc: 'Special füllt 35% schneller', passive: true, apply: p => ({ ...p, fastSpecial: true }) },
+  { id: 'tough_bl', icon: '🔰', title: 'Eisenblock',          desc: 'Block absorbiert 65%', passive: true,  apply: p => ({ ...p, toughBlock: true }) },
+  { id: 'goldnose', icon: '💰', title: 'Goldnase',            desc: '+60% Gold aus Kämpfen', passive: true,  apply: p => ({ ...p, goldBonus: true }) },
+  { id: 'nimble',   icon: '🌪️', title: 'Gewandtheit',        desc: 'Ausweichen ignoriert Wuchttreffer', passive: true, apply: p => ({ ...p, alwaysDodge: true }) },
+]
+
+function rollPerks(count = 3, activePerks = []) {
+  // Passives can only be picked once; stat boosts always available
+  const available = PERKS.filter(p => !p.passive || !activePerks.includes(p.id))
+  const shuffled = [...available].sort(() => Math.random() - 0.5)
+  return shuffled.slice(0, count).map(p => p.id)
+}
+
+// ─── Init & State ─────────────────────────────────────────────────────────────
+
 function initRun(playerClass, seed) {
   const cls = CLASSES[playerClass]
   const dungeon = generateDungeon(seed)
@@ -32,8 +58,9 @@ function initRun(playerClass, seed) {
     floor: 1,
     kills: 0,
     items: [],
+    activePerks: [],
   }
-  return { dungeon, player, phase: 'dungeon_map', combat: null, floorIndex: 0 }
+  return { dungeon, player, phase: 'dungeon_map', combat: null, floorIndex: 0, pendingPerkIds: null }
 }
 
 function reducer(state, action) {
@@ -41,7 +68,7 @@ function reducer(state, action) {
     case 'ENTER_ROOM': {
       const room = state.dungeon.rooms[state.floorIndex]
       if (room.type === 'combat' || room.type === 'boss') {
-        const monster = getMonsterForFloor(state.player.floor)
+        const monster = getMonsterForFloor(state.player.floor, room.type === 'boss')
         const combat = createCombatState(state.player, monster)
         return { ...state, phase: 'combat', combat }
       }
@@ -76,10 +103,10 @@ function reducer(state, action) {
 
     case 'PLAYER_ACTION': {
       if (state.phase !== 'combat') return state
-      const combat = applyPlayerAction(state.combat, action.action)
+      const combat = applyPlayerAction(state.combat, action.action, action.timingBonus ?? 1.0)
       if (combat.phase === 'victory') {
         const xpGain = state.combat.monster.xp
-        const goldGain = rollLootGold(state.combat.monster)
+        const goldGain = rollLootGold(state.combat.monster, state.player)
         const player = { ...state.player, hp: combat.player.hp, xp: state.player.xp + xpGain, gold: state.player.gold + goldGain, kills: state.player.kills + 1 }
         // go through monster_dying phase first so the death animation can play
         return { ...state, phase: 'monster_dying', combat, player, lastLoot: { xp: xpGain, gold: goldGain } }
@@ -115,7 +142,21 @@ function reducer(state, action) {
     }
 
     case 'DISMISS_LEVEL_UP': {
-      return { ...state, phase: 'dungeon_map' }
+      // Fallback safety — pick first available perk automatically
+      const perkId = state.pendingPerkIds?.[0]
+      if (perkId) {
+        const perk = PERKS.find(p => p.id === perkId)
+        const player = { ...perk.apply(state.player), activePerks: [...(state.player.activePerks ?? []), perkId] }
+        return { ...state, phase: 'dungeon_map', pendingPerkIds: null, player }
+      }
+      return { ...state, phase: 'dungeon_map', pendingPerkIds: null }
+    }
+
+    case 'PICK_PERK': {
+      const perk = PERKS.find(p => p.id === action.perkId)
+      if (!perk || !state.pendingPerkIds?.includes(action.perkId)) return state
+      const player = { ...perk.apply(state.player), activePerks: [...(state.player.activePerks ?? []), action.perkId] }
+      return { ...state, phase: 'dungeon_map', pendingPerkIds: null, player }
     }
 
     case 'BUY_ITEM': {
@@ -144,11 +185,12 @@ function markCleared(dungeon, idx) {
   return { ...dungeon, rooms }
 }
 
-function rollLootGold(monster) {
+function rollLootGold(monster, player) {
   const loot = monster.loot?.find(l => l.item === 'gold')
   if (!loot) return 0
   const [min, max] = loot.amount
-  return min + Math.floor(Math.random() * (max - min + 1))
+  const base = min + Math.floor(Math.random() * (max - min + 1))
+  return player?.goldBonus ? Math.round(base * 1.6) : base
 }
 
 const SHOP_POOL = [
@@ -191,22 +233,15 @@ function applyTreasure(player, loot) {
   }
 }
 
-const LEVEL_GAINS = { hp: 15, atk: 4, def: 2 }
-
-function xpNeeded(level) { return level * 80 + 20 }
+// XP needed per level: faster early, gradual late
+// L2:100, L3:150, L4:200, L5:250 — expect 2–4 level-ups per run
+function xpNeeded(level) { return level * 50 + 50 }
 
 function checkLevelUp(player) {
   if (player.xp < player.xpToNext) return { player, didLevel: false }
   const newLevel = player.level + 1
-  const leveled = {
-    ...player,
-    level: newLevel,
-    xpToNext: xpNeeded(newLevel),
-    maxHp: player.maxHp + LEVEL_GAINS.hp,
-    hp: Math.min(player.maxHp + LEVEL_GAINS.hp, player.hp + LEVEL_GAINS.hp),
-    atk: player.atk + LEVEL_GAINS.atk,
-    def: player.def + LEVEL_GAINS.def,
-  }
+  const leveled = { ...player, level: newLevel, xpToNext: xpNeeded(newLevel) }
+  // Stat gains are now chosen via the perk system (no auto-apply here)
   return { player: leveled, didLevel: true }
 }
 
@@ -219,7 +254,8 @@ function advanceFloor(state) {
   const basePlayer = { ...state.player, floor: state.player.floor + 1 }
   const { player, didLevel } = checkLevelUp(basePlayer)
   if (didLevel) {
-    return { ...state, phase: 'level_up', floorIndex: nextIndex, dungeon, player }
+    const pendingPerkIds = rollPerks(3, player.activePerks ?? [])
+    return { ...state, phase: 'level_up', floorIndex: nextIndex, dungeon, player, pendingPerkIds }
   }
   return { ...state, phase: 'dungeon_map', floorIndex: nextIndex, dungeon, player }
 }
@@ -340,7 +376,7 @@ function GameInner({ playerClass, seed, isDaily }) {
     return <LootScreen state={state} onNext={() => dispatch({ type: 'NEXT_FLOOR' })} />
   }
   if (state.phase === 'level_up') {
-    return <LevelUpScreen state={state} onDismiss={() => dispatch({ type: 'DISMISS_LEVEL_UP' })} />
+    return <LevelUpScreen state={state} onPick={perkId => dispatch({ type: 'PICK_PERK', perkId })} />
   }
   if (state.phase === 'rest') {
     return <RestScreen state={state} onNext={() => dispatch({ type: 'LEAVE_ROOM' })} />
@@ -878,80 +914,62 @@ function LootScreen({ state, onNext }) {
 
 // ─── Level Up Screen ──────────────────────────────────────────────────────────
 
-function LevelUpScreen({ state, onDismiss }) {
-  const { player } = state
-  useEffect(() => {
-    // Re-use the victory fanfare for level-up feedback
-    sfx.victory()
-  }, [])
+function LevelUpScreen({ state, onPick }) {
+  const { player, pendingPerkIds } = state
+  const perks = (pendingPerkIds ?? []).map(id => PERKS.find(p => p.id === id)).filter(Boolean)
+
+  useEffect(() => { sfx.victory() }, [])
 
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-6 px-6 bg-dungeon safe-top safe-bottom">
+    <div className="flex flex-col items-center justify-center h-full gap-5 px-5 bg-dungeon safe-top safe-bottom">
       <motion.div
         initial={{ scale: 0, rotate: -15 }}
         animate={{ scale: 1, rotate: 0 }}
-        transition={{ type: 'spring', stiffness: 260, damping: 16 }}
-        className="text-6xl"
+        transition={{ type: 'spring', stiffness: 280, damping: 14 }}
+        className="text-5xl"
       >
         ⬆️
       </motion.div>
 
       <motion.div
-        initial={{ opacity: 0, y: -12 }}
+        initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15 }}
-        className="pixel text-gold text-sm text-center"
+        transition={{ delay: 0.1 }}
+        className="text-center"
       >
-        LEVEL UP!
+        <div className="pixel text-gold text-sm">LEVEL UP!</div>
+        <div className="pixel text-purple-300 text-xs mt-1">LEVEL {player.level}</div>
       </motion.div>
 
-      <motion.div
+      <motion.p
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        transition={{ delay: 0.25 }}
-        className="pixel text-purple-300 text-xs text-center"
+        transition={{ delay: 0.2 }}
+        className="text-gray-500 text-xs text-center"
       >
-        LEVEL {player.level}
-      </motion.div>
+        Wähle eine Verbesserung:
+      </motion.p>
 
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.35 }}
-        className="flex flex-col gap-3 w-full max-w-xs"
-      >
-        {[
-          { icon: '❤️',  label: 'Max HP',        gain: `+${LEVEL_GAINS.hp}`,  value: `${player.maxHp} HP`,   color: 'text-green-400' },
-          { icon: '⚔️', label: 'Angriff',         gain: `+${LEVEL_GAINS.atk}`, value: `${player.atk} ATK`,   color: 'text-orange-400' },
-          { icon: '🛡️', label: 'Verteidigung',    gain: `+${LEVEL_GAINS.def}`, value: `${player.def} DEF`,   color: 'text-blue-400' },
-        ].map((s, i) => (
-          <motion.div
-            key={s.label}
-            initial={{ opacity: 0, x: -20 }}
+      <div className="flex flex-col gap-3 w-full max-w-xs">
+        {perks.map((perk, i) => (
+          <motion.button
+            key={perk.id}
+            initial={{ opacity: 0, x: -24 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.4 + i * 0.1 }}
-            className="flex items-center gap-4 border border-dungeon-border bg-dungeon-dark px-4 py-3"
+            transition={{ delay: 0.25 + i * 0.1 }}
+            onClick={() => onPick(perk.id)}
+            whileTap={{ scale: 0.97 }}
+            className="flex items-center gap-4 border-2 border-dungeon-border bg-dungeon-dark px-4 py-4 text-left hover:border-gold active:bg-dungeon-gray transition-all"
           >
-            <span className="text-xl">{s.icon}</span>
+            <span className="text-2xl">{perk.icon}</span>
             <div className="flex-1">
-              <div className="text-gray-400 text-xs">{s.label}</div>
-              <div className={`pixel text-xs mt-0.5 ${s.color}`}>{s.gain}</div>
+              <div className="pixel text-xs text-gold-light">{perk.title}</div>
+              <div className="text-gray-500 text-xs mt-0.5">{perk.desc}</div>
             </div>
-            <div className="pixel text-xs text-gray-500">{s.value}</div>
-          </motion.div>
+            <span className="text-gray-600 text-xs">→</span>
+          </motion.button>
         ))}
-      </motion.div>
-
-      <motion.button
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.75 }}
-        onClick={onDismiss}
-        whileTap={{ scale: 0.97 }}
-        className="w-full max-w-xs py-4 pixel text-sm border-2 border-gold bg-dungeon-gold text-dungeon-black active:scale-95"
-      >
-        WEITER →
-      </motion.button>
+      </div>
     </div>
   )
 }
@@ -960,20 +978,25 @@ function LevelUpScreen({ state, onDismiss }) {
 
 function RunEnd({ state, won, isDaily, onRetry, onLeaderboard, onMenu }) {
   const { player, dungeon } = state
-  const [name, setName] = useState('')
-  const [submitted, setSubmitted] = useState(false)
+  const profile = JSON.parse(localStorage.getItem('dungeontap_profile') || 'null')
+
+  const [name, setName]       = useState(profile?.name || '')
+  const [submitted, setSubmitted]   = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [score, setScore] = useState(null)
+  const [score, setScore]     = useState(null)
+  const [pinError, setPinError]     = useState(false)
 
   async function submitScore() {
     if (submitting || submitted) return
     setSubmitting(true)
+    setPinError(false)
     try {
       const res = await fetch('/api/leaderboard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: name.trim() || 'Anonym',
+          pin: profile?.pin ?? '',
           class: player.class,
           floor: player.floor,
           xp: player.xp,
@@ -985,12 +1008,14 @@ function RunEnd({ state, won, isDaily, onRetry, onLeaderboard, onMenu }) {
         }),
       })
       const data = await res.json()
+      if (data.error === 'wrong_pin') {
+        setPinError(true)
+        return
+      }
       setScore(data.score)
       setSubmitted(true)
-      // Store run ID so leaderboard can highlight it
       if (data.id) sessionStorage.setItem('lastRunId', String(data.id))
     } catch {
-      // backend not reachable – still let the player continue
       setSubmitted(true)
     } finally {
       setSubmitting(false)
@@ -1042,10 +1067,16 @@ function RunEnd({ state, won, isDaily, onRetry, onLeaderboard, onMenu }) {
             maxLength={20}
             placeholder="Dein Name (optional)"
             value={name}
-            onChange={e => setName(e.target.value)}
+            onChange={e => { setName(e.target.value); setPinError(false) }}
             onKeyDown={e => e.key === 'Enter' && submitScore()}
             className="w-full px-4 py-3 bg-dungeon-dark border border-dungeon-border text-white text-sm placeholder-gray-600 focus:outline-none focus:border-gold"
           />
+          {pinError && (
+            <div className="text-red-400 text-xs text-center leading-relaxed">
+              Falscher PIN für diesen Namen.{' '}
+              <button onClick={() => { window.location.href = '/profile?next=' + encodeURIComponent('/game') }} className="underline">PIN ändern</button>
+            </div>
+          )}
           <button
             onClick={submitScore}
             disabled={submitting}

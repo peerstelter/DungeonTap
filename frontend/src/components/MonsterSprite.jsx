@@ -131,6 +131,147 @@ const SPRITES = {
     [5,15,1,1, C.teal],[8,15,2,1, C.teal],[11,15,1,1, C.teal],
   ],
 
+  rat: [
+    // body
+    [4,9,7,4, C.brown],
+    // head (pointy snout)
+    [8,7,5,4, C.brown],
+    [11,8,3,2, C.ltgray],
+    // ears
+    [5,6,2,3, C.brown],[4,6,1,2, C.dkred],
+    [8,6,2,3, C.brown],[9,6,1,2, C.dkred],
+    // eye
+    [10,8,1,1, C.black],[10,8,1,1, C.red],
+    // nose
+    [13,9,1,1, C.dkred],
+    // whiskers
+    [11,9,3,1, C.ltgray],[11,10,2,1, C.ltgray],
+    // legs
+    [5,13,2,2, C.brown],[8,13,2,2, C.brown],
+    // feet
+    [4,14,3,1, C.brown],[8,14,3,1, C.brown],
+    // tail
+    [2,11,3,1, C.brown],[1,12,2,1, C.ltgray],[1,13,1,1, C.ltgray],
+  ],
+
+  dark_elf: [
+    // body
+    [5,8,6,6, '#2d1b4e'],
+    // head
+    [5,3,6,5, '#c8a882'],
+    // long pointed ear
+    [3,4,2,3, '#c8a882'],[2,4,1,4, '#c8a882'],
+    [13,4,2,3, '#c8a882'],[14,4,1,4, '#c8a882'],
+    // hair (dark purple)
+    [5,3,6,2, '#4a1a7a'],[4,3,2,3, '#4a1a7a'],[11,3,2,3, '#4a1a7a'],
+    // eyes (glowing violet)
+    [6,5,2,1, C.purple],[9,5,2,1, C.purple],
+    [6,5,1,1, C.ltpur],[9,5,1,1, C.ltpur],
+    // armor
+    [5,8,6,4, '#1a0a2e'],
+    [6,8,4,1, C.purple],
+    [5,10,1,2, C.purple],[10,10,1,2, C.purple],
+    // cloak
+    [3,9,2,5, '#2d1b4e'],[11,9,2,5, '#2d1b4e'],
+    // legs
+    [6,14,2,2, '#2d1b4e'],[9,14,2,2, '#2d1b4e'],
+    // boots
+    [5,15,3,1, '#1a0a2e'],[9,15,3,1, '#1a0a2e'],
+    // blade
+    [12,7,1,5, C.ltgray],[12,6,1,2, C.white],[13,8,1,1, C.ltgray],
+  ],
+
+  stone_golem: [
+    // massive body
+    [3,7,10,7, C.gray],
+    // head (large cube)
+    [4,3,8,5, C.gray],
+    // cracks
+    [6,4,1,3, C.dkgray],[10,5,1,2, C.dkgray],
+    [5,8,1,2, C.dkgray],[9,9,3,1, C.dkgray],
+    // eyes (glowing orange)
+    [5,5,3,2, C.black],[5,5,2,1, C.orange],
+    [9,5,3,2, C.black],[9,5,2,1, C.orange],
+    // mouth
+    [6,7,5,1, C.dkgray],
+    [7,7,1,1, C.black],[9,7,1,1, C.black],
+    // arms (thick)
+    [1,8,3,5, C.gray],[12,8,3,5, C.gray],
+    [1,12,3,1, C.ltgray],[12,12,3,1, C.ltgray],
+    // fists
+    [0,9,2,3, C.ltgray],[14,9,2,3, C.ltgray],
+    // legs
+    [4,14,4,2, C.gray],[9,14,4,2, C.gray],
+    // stone detail
+    [4,7,10,1, C.ltgray],[3,8,1,3, C.ltgray],
+  ],
+
+  vampire: [
+    // cape (dark red)
+    [3,8,10,7, '#5a0a14'],
+    [3,8,1,6, '#3a0008'],[12,8,1,6, '#3a0008'],
+    // body
+    [5,9,6,5, '#1a0508'],
+    // white shirt
+    [6,10,4,3, C.white],
+    // head
+    [5,3,6,5, '#c8b4b4'],
+    // widow's peak hair
+    [5,3,6,2, '#1a0508'],
+    [7,2,2,2, '#1a0508'],[8,2,1,3, '#1a0508'],
+    // eyes (red glow)
+    [6,5,2,2, C.black],[6,5,1,1, C.red],
+    [9,5,2,2, C.black],[9,5,1,1, C.red],
+    // fangs
+    [7,8,1,2, C.white],[9,8,1,2, C.white],
+    // hands (clawed)
+    [3,10,2,3, '#c8b4b4'],[11,10,2,3, '#c8b4b4'],
+    [2,12,2,1, C.white],[12,12,2,1, C.white],
+    // legs/boots
+    [6,14,2,2, '#1a0508'],[9,14,2,2, '#1a0508'],
+    [5,15,3,1, '#1a0508'],[9,15,3,1, '#1a0508'],
+    // collar
+    [5,8,6,1, '#5a0a14'],
+    [6,8,1,1, C.white],[10,8,1,1, C.white],
+  ],
+
+  boss_dragon: [
+    // body (dark red, massive)
+    [4,7,9,6, C.dkred],
+    // neck
+    [7,5,4,3, C.dkred],
+    // head (wide, imposing)
+    [5,2,7,4, C.dkred],
+    // snout
+    [9,4,4,2, C.red],
+    // crown / horns
+    [5,1,1,2, C.gold],[7,0,1,3, C.gold],[9,0,1,3, C.gold],[11,1,1,2, C.gold],
+    // eyes (glowing gold)
+    [6,3,2,2, C.black],[6,3,2,1, C.yellow],
+    [10,3,2,2, C.black],[10,3,2,1, C.yellow],
+    // nostril
+    [11,5,1,1, C.black],[12,5,1,1, C.black],
+    // fangs
+    [8,6,1,2, C.bone],[10,6,1,2, C.bone],
+    // wings (huge, dark)
+    [0,7,5,5, C.dkred],[0,7,1,6, C.red],[1,6,2,1, C.dkred],
+    [12,7,5,5, C.dkred],[15,7,1,6, C.red],[13,6,2,1, C.dkred],
+    // wing membrane
+    [1,8,3,4, '#7a1a10'],[13,8,3,4, '#7a1a10'],
+    // belly (orange-gold scales)
+    [5,9,7,4, C.orange],
+    [6,9,1,1, C.yellow],[8,9,1,1, C.yellow],[10,9,1,1, C.yellow],
+    [5,11,1,1, C.yellow],[7,11,1,1, C.yellow],[9,11,1,1, C.yellow],[11,11,1,1, C.yellow],
+    // arms/claws
+    [4,12,2,2, C.dkred],[11,12,2,2, C.dkred],
+    [3,14,2,1, C.gold],[12,14,2,1, C.gold],
+    // legs
+    [5,13,3,2, C.dkred],[9,13,3,2, C.dkred],
+    [4,15,4,1, C.gold],[9,15,4,1, C.gold],
+    // tail
+    [2,10,3,1, C.dkred],[1,11,2,1, C.dkred],[0,12,2,1, C.red],
+  ],
+
   dragon_whelp: [
     // body
     [5,7,7,6, C.purple],
