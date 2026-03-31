@@ -1062,7 +1062,7 @@ function RunEnd({ state, won, isDaily, onRetry, onLeaderboard, onMenu }) {
   const [submitted, setSubmitted]   = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [score, setScore]     = useState(null)
-  const [pinError, setPinError]     = useState(false)
+  const [pinError, setPinError]     = useState(null)
 
   async function submitScore() {
     if (submitting || submitted) return
@@ -1087,7 +1087,11 @@ function RunEnd({ state, won, isDaily, onRetry, onLeaderboard, onMenu }) {
       })
       const data = await res.json()
       if (data.error === 'wrong_pin') {
-        setPinError(true)
+        setPinError('wrong_pin')
+        return
+      }
+      if (data.error === 'name_taken') {
+        setPinError('name_taken')
         return
       }
       setScore(data.score)
@@ -1145,14 +1149,20 @@ function RunEnd({ state, won, isDaily, onRetry, onLeaderboard, onMenu }) {
             maxLength={20}
             placeholder="Dein Name (optional)"
             value={name}
-            onChange={e => { setName(e.target.value); setPinError(false) }}
+            onChange={e => { setName(e.target.value); setPinError(null) }}
             onKeyDown={e => e.key === 'Enter' && submitScore()}
             className="w-full px-4 py-3 bg-dungeon-dark border border-dungeon-border text-white text-sm placeholder-gray-600 focus:outline-none focus:border-gold"
           />
-          {pinError && (
+          {pinError === 'wrong_pin' && (
             <div className="text-red-400 text-xs text-center leading-relaxed">
               Falscher PIN für diesen Namen.{' '}
-              <button onClick={() => { window.location.href = '/profile?next=' + encodeURIComponent('/game') }} className="underline">PIN ändern</button>
+              <button onClick={() => { window.location.href = '/profile?next=/game' }} className="underline">PIN ändern</button>
+            </div>
+          )}
+          {pinError === 'name_taken' && (
+            <div className="text-red-400 text-xs text-center leading-relaxed">
+              Dieser Name ist vergeben.{' '}
+              <button onClick={() => { window.location.href = '/profile?next=/game' }} className="underline">Profil öffnen</button>
             </div>
           )}
           <button

@@ -1,15 +1,9 @@
 const express = require('express')
-const crypto  = require('node:crypto')
 const { getDb } = require('../db/schema')
+const { hashPin } = require('./users')
 
 const router = express.Router()
 const MAX_ENTRIES = 50
-
-function hashPin(name, pin) {
-  return crypto.createHmac('sha256', 'dungeontap-v1')
-    .update(`${name.toLowerCase()}:${pin}`)
-    .digest('hex')
-}
 
 // GET /api/leaderboard?type=global|daily
 router.get('/', (req, res) => {
@@ -52,18 +46,26 @@ router.post('/', (req, res) => {
   const playerName = String(name || 'Anonym').slice(0, 20).trim() || 'Anonym'
   const db = getDb()
 
-  // PIN verification (optional — anonymous runs always pass)
-  if (pin) {
+  // Skip PIN check for anonymous submissions
+  const isAnonymous = playerName === 'Anonym' || !pin
+
+  if (!isAnonymous) {
     const hash = hashPin(playerName, String(pin))
     const existing = db.prepare('SELECT pin_hash FROM users WHERE name = ?').get(playerName)
 
     if (existing) {
+      // Name is registered — PIN must match
       if (existing.pin_hash !== hash) {
         return res.status(403).json({ error: 'wrong_pin' })
       }
     } else {
-      // First time this name is used with a PIN — register it
-      db.prepare('INSERT INTO users (name, pin_hash) VALUES (?, ?)').run(playerName, hash)
+      // Name not yet registered — claim it now
+      try {
+        db.prepare('INSERT INTO users (name, pin_hash) VALUES (?, ?)').run(playerName, hash)
+      } catch {
+        // UNIQUE constraint: another request registered the same name just now
+        return res.status(409).json({ error: 'name_taken' })
+      }
     }
   }
 

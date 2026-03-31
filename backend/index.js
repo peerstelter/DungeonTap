@@ -7,8 +7,9 @@ const fs = require('fs')
 const dataDir = path.join(__dirname, 'data')
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true })
 
-const leaderboardRouter = require('./routes/leaderboard')
+const leaderboardRouter  = require('./routes/leaderboard')
 const dailyDungeonRouter = require('./routes/daily-dungeon')
+const { router: usersRouter } = require('./routes/users')
 
 const app = express()
 const PORT = process.env.PORT || 3000
@@ -19,8 +20,9 @@ app.use(cors({
 }))
 app.use(express.json({ limit: '16kb' }))
 
-app.use('/api/leaderboard', leaderboardRouter)
+app.use('/api/leaderboard',   leaderboardRouter)
 app.use('/api/daily-dungeon', dailyDungeonRouter)
+app.use('/api/users',         usersRouter)
 
 app.get('/api/health', (_, res) => res.json({ ok: true }))
 
