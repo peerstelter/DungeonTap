@@ -91,9 +91,9 @@ export const MONSTERS = {
     id: 'stone_golem',
     name: 'Steingolem',
     icon: '🗿',
-    hp: 200,
-    atk: 32,
-    def: 18,
+    hp: 220,
+    atk: 30,
+    def: 8,   // High HP compensates; DEF 18 made it nearly unkillable
     xp: 60,
     loot: [
       { item: 'gold', amount: [20, 45], chance: 1.0 },
@@ -138,8 +138,8 @@ export const MONSTERS = {
     name: 'DRACHENLORD',
     icon: '🔥',
     hp: 350,
-    atk: 45,
-    def: 20,
+    atk: 32,   // Reduced from 45; fire_breath still brutal but survivable when blocked
+    def: 14,
     xp: 200,
     isBoss: true,
     loot: [{ item: 'gold', amount: [80, 150], chance: 1.0 }],
@@ -163,14 +163,14 @@ export const FLOOR_ENCOUNTERS = [
 export function getMonsterForFloor(floor, isBoss = false) {
   if (isBoss) {
     const base = MONSTERS.boss_dragon
-    const scale = 1 + (floor - 1) * 0.10
+    const scale = Math.min(2.0, 1 + (floor - 1) * 0.07)
     return {
       ...base,
       hp:    Math.round(base.hp * scale),
       maxHp: Math.round(base.hp * scale),
       atk:   Math.round(base.atk * scale),
       def:   Math.round(base.def * scale),
-      xp:    Math.round(base.xp * (1 + (floor - 1) * 0.08)),
+      xp:    Math.round(base.xp * Math.min(2.5, 1 + (floor - 1) * 0.08)),
     }
   }
 
@@ -179,14 +179,15 @@ export function getMonsterForFloor(floor, isBoss = false) {
   const id = entry.pool[Math.floor(Math.random() * entry.pool.length)]
   const base = MONSTERS[id]
 
-  // Gentler scaling: 10% per floor vs old 12%
-  const scale = 1 + (floor - 1) * 0.10
+  // Gentle scaling: 7% per floor, hard cap at ×2.0
+  const scale = Math.min(2.0, 1 + (floor - 1) * 0.07)
+  const xpScale = Math.min(2.5, 1 + (floor - 1) * 0.08)
   return {
     ...base,
     hp:    Math.round(base.hp * scale),
     maxHp: Math.round(base.hp * scale),
     atk:   Math.round(base.atk * scale),
     def:   Math.round(base.def * scale),
-    xp:    Math.round(base.xp * (1 + (floor - 1) * 0.08)),
+    xp:    Math.round(base.xp * xpScale),
   }
 }

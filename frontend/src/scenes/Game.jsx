@@ -38,27 +38,84 @@ function rollPerks(count = 3, activePerks = []) {
 
 // ─── Init & State ─────────────────────────────────────────────────────────────
 
-function initRun(playerClass, seed) {
+// ─── Daily Hero Persistence ───────────────────────────────────────────────────
+// Daily runs keep level/perks/stats across attempts; only HP resets each try.
+// A new calendar day resets the hero entirely.
+
+const DAILY_HERO_KEY = 'dungeontap_daily_hero'
+const TODAY = new Date().toISOString().slice(0, 10)
+
+export function loadDailyHero() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DAILY_HERO_KEY) || 'null')
+    if (saved?.date === TODAY) return saved.player
+  } catch {}
+  return null
+}
+
+export function saveDailyHero(player) {
+  localStorage.setItem(DAILY_HERO_KEY, JSON.stringify({
+    date: TODAY,
+    player: {
+      class:       player.class,
+      maxHp:       player.maxHp,
+      atk:         player.atk,
+      def:         player.def,
+      level:       player.level,
+      xp:          player.xp,
+      xpToNext:    player.xpToNext,
+      activePerks: player.activePerks ?? [],
+      // passives
+      lifesteal:   player.lifesteal,
+      fastSpecial: player.fastSpecial,
+      toughBlock:  player.toughBlock,
+      goldBonus:   player.goldBonus,
+      alwaysDodge: player.alwaysDodge,
+    },
+  }))
+}
+
+// ─── Init & State ─────────────────────────────────────────────────────────────
+
+function initRun(playerClass, seed, savedHero = null) {
   const cls = CLASSES[playerClass]
   const dungeon = generateDungeon(seed)
-  const player = {
-    class: playerClass,
-    hp: cls.baseHp,
-    maxHp: cls.baseHp,
-    atk: cls.baseAtk,
-    def: cls.baseDef,
-    energy: cls.baseEnergy,
-    maxEnergy: cls.baseEnergy,
-    specialEffect: cls.specialEffect,
-    specialName: cls.specialName,
-    gold: 0,
-    xp: 0,
-    level: 1,
-    xpToNext: 100,
-    floor: 1,
-    kills: 0,
-    items: [],
-    activePerks: [],
+
+  let player
+  if (savedHero) {
+    // Returning daily attempt: restore character, reset run-specific stats
+    player = {
+      ...savedHero,
+      hp: savedHero.maxHp,     // full HP for fresh attempt
+      energy: cls.baseEnergy,
+      maxEnergy: cls.baseEnergy,
+      specialEffect: cls.specialEffect,
+      specialName: cls.specialName,
+      gold: 0,
+      floor: 1,
+      kills: 0,
+      items: [],
+    }
+  } else {
+    player = {
+      class: playerClass,
+      hp: cls.baseHp,
+      maxHp: cls.baseHp,
+      atk: cls.baseAtk,
+      def: cls.baseDef,
+      energy: cls.baseEnergy,
+      maxEnergy: cls.baseEnergy,
+      specialEffect: cls.specialEffect,
+      specialName: cls.specialName,
+      gold: 0,
+      xp: 0,
+      level: 1,
+      xpToNext: 100,
+      floor: 1,
+      kills: 0,
+      items: [],
+      activePerks: [],
+    }
   }
   return { dungeon, player, phase: 'dungeon_map', combat: null, floorIndex: 0, pendingPerkIds: null }
 }
@@ -233,9 +290,9 @@ function applyTreasure(player, loot) {
   }
 }
 
-// XP needed per level: faster early, gradual late
-// L2:100, L3:150, L4:200, L5:250 — expect 2–4 level-ups per run
-function xpNeeded(level) { return level * 50 + 50 }
+// XP needed per level: L2:70, L3:90, L4:110 ...
+// Expect 4–7 level-ups per full run → plenty of perk choices
+function xpNeeded(level) { return level * 20 + 50 }
 
 function checkLevelUp(player) {
   if (player.xp < player.xpToNext) return { player, didLevel: false }
@@ -272,7 +329,7 @@ function applyItemEffect(player, item) {
   }
 }
 
-// Outer shell: fetches daily seed from backend before starting
+// Outer shell: fetches daily seed + loads saved daily hero before starting
 export default function Game() {
   const [params] = useSearchParams()
   const isDaily = params.get('mode') === 'daily'
@@ -297,12 +354,22 @@ export default function Game() {
       </div>
     )
   }
-  return <GameInner playerClass={playerClass} seed={seed} isDaily={isDaily} />
+
+  const savedHero = isDaily ? loadDailyHero() : null
+  return <GameInner playerClass={playerClass} seed={seed} isDaily={isDaily} savedHero={savedHero} />
 }
 
-function GameInner({ playerClass, seed, isDaily }) {
+function GameInner({ playerClass, seed, isDaily, savedHero }) {
   const navigate = useNavigate()
-  const [state, dispatch] = useReducer(reducer, null, () => initRun(playerClass, seed))
+  const isReturningDaily = isDaily && savedHero !== null
+  const [state, dispatch] = useReducer(reducer, null, () => initRun(playerClass, seed, savedHero))
+
+  // Save daily hero whenever the run ends
+  useEffect(() => {
+    if (isDaily && (state.phase === 'game_over' || state.phase === 'victory_run')) {
+      saveDailyHero(state.player)
+    }
+  }, [state.phase]) // eslint-disable-line
   const swipeZoneRef = useRef(null)
   const telegraphTimerRef = useRef(null)
 
@@ -359,7 +426,7 @@ function GameInner({ playerClass, seed, isDaily }) {
   }, [state.phase, state.combat?.phase, state.combat?.specialBar])
 
   if (state.phase === 'dungeon_map') {
-    return <DungeonMap state={state} onEnter={() => dispatch({ type: 'ENTER_ROOM' })} onQuit={() => navigate('/')} />
+    return <DungeonMap state={state} onEnter={() => dispatch({ type: 'ENTER_ROOM' })} onQuit={() => navigate('/')} isReturningDaily={isReturningDaily} />
   }
   if (state.phase === 'combat' || state.phase === 'monster_dying') {
     return (
@@ -399,7 +466,7 @@ function GameInner({ playerClass, seed, isDaily }) {
         state={state}
         won={false}
         isDaily={isDaily}
-        onRetry={() => navigate('/class-select')}
+        onRetry={() => isDaily ? navigate('/game?mode=daily') : navigate('/class-select')}
         onLeaderboard={() => navigate('/leaderboard')}
         onMenu={() => navigate('/')}
       />
@@ -411,7 +478,7 @@ function GameInner({ playerClass, seed, isDaily }) {
         state={state}
         won={true}
         isDaily={isDaily}
-        onRetry={() => navigate('/class-select')}
+        onRetry={() => isDaily ? navigate('/game?mode=daily') : navigate('/class-select')}
         onLeaderboard={() => navigate('/leaderboard')}
         onMenu={() => navigate('/')}
       />
@@ -421,7 +488,7 @@ function GameInner({ playerClass, seed, isDaily }) {
 
 // ─── Dungeon Map ──────────────────────────────────────────────────────────────
 
-function DungeonMap({ state, onEnter, onQuit }) {
+function DungeonMap({ state, onEnter, onQuit, isReturningDaily }) {
   const { dungeon, player, floorIndex } = state
   const currentRoom = dungeon.rooms[floorIndex]
   const currentRef = useRef(null)
@@ -446,6 +513,17 @@ function DungeonMap({ state, onEnter, onQuit }) {
       </div>
 
       <HpBar hp={player.hp} maxHp={player.maxHp} />
+
+      {/* Daily returning-hero banner */}
+      {isReturningDaily && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mt-2 px-3 py-1.5 border border-purple-900 bg-purple-950/50 text-purple-400 text-xs text-center"
+        >
+          ⚡ Dein Held von heute – LV{player.level} · {player.activePerks?.length ?? 0} Perks
+        </motion.div>
+      )}
 
       {/* Path */}
       <div className="flex-1 overflow-y-auto mt-5 pr-1">
@@ -1091,8 +1169,13 @@ function RunEnd({ state, won, isDaily, onRetry, onLeaderboard, onMenu }) {
             BESTENLISTE
           </button>
           <button onClick={onRetry} className="py-4 pixel text-xs border border-dungeon-border text-gray-400 active:scale-95">
-            NOCHMAL
+            {isDaily ? 'NOCHMAL (HELD BLEIBT)' : 'NOCHMAL'}
           </button>
+          {isDaily && !won && (
+            <div className="text-purple-500 text-xs text-center leading-relaxed">
+              Dein LV{player.level}-Held bleibt bis Mitternacht.
+            </div>
+          )}
           <button onClick={onMenu} className="py-4 pixel text-xs text-gray-600 active:scale-95">
             HAUPTMENÜ
           </button>

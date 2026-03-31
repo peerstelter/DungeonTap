@@ -161,7 +161,7 @@ function calcEnemyDamage(monster, move) {
     case 'heavy':       return Math.round(base * 2.0)
     case 'quick':       return Math.round(base * 0.7)
     case 'rage':        return Math.round(base * 2.4)
-    case 'fire_breath': return Math.round(base * 2.8)
+    case 'fire_breath': return Math.round(base * 2.0)  // Was 2.8 — now survives if blocked
     case 'drain':       return Math.round(base * 1.2)
     default:            return base
   }
