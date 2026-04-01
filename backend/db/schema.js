@@ -45,6 +45,16 @@ function migrate(db) {
     );
   `)
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS daily_heroes (
+      user_name  TEXT NOT NULL,
+      date       TEXT NOT NULL,
+      hero_data  TEXT NOT NULL,
+      updated_at INTEGER DEFAULT (unixepoch()),
+      PRIMARY KEY (user_name, date)
+    );
+  `)
+
   // Additive migrations — safe to run on every startup
   const addColumn = (col, def) => {
     try { db.exec(`ALTER TABLE runs ADD COLUMN ${col} ${def}`) } catch {}

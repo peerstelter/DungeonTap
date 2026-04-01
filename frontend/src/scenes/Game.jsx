@@ -61,11 +61,32 @@ function rollTrap()  { return TRAPS[Math.floor(Math.random() * TRAPS.length)] }
 
 // ─── Daily Hero Persistence ───────────────────────────────────────────────────
 // Daily runs keep level/perks/stats across attempts; only HP resets each try.
-// A new calendar day resets the hero entirely.
+// Hero is synced to the backend so it carries across devices.
+// localStorage is used as an offline cache / anonymous fallback.
 
 const DAILY_HERO_KEY = 'dungeontap_daily_hero'
 const TODAY = new Date().toISOString().slice(0, 10)
 
+// Extract the fields that should persist across attempts
+function buildHeroSnapshot(player) {
+  return {
+    class:       player.class,
+    maxHp:       player.maxHp,
+    atk:         player.atk,
+    def:         player.def,
+    level:       player.level,
+    xp:          player.xp,
+    xpToNext:    player.xpToNext,
+    activePerks: player.activePerks ?? [],
+    lifesteal:   player.lifesteal,
+    fastSpecial: player.fastSpecial,
+    toughBlock:  player.toughBlock,
+    goldBonus:   player.goldBonus,
+    alwaysDodge: player.alwaysDodge,
+  }
+}
+
+// localStorage only (sync, used as fallback)
 export function loadDailyHero() {
   try {
     const saved = JSON.parse(localStorage.getItem(DAILY_HERO_KEY) || 'null')
@@ -75,25 +96,42 @@ export function loadDailyHero() {
 }
 
 export function saveDailyHero(player) {
-  localStorage.setItem(DAILY_HERO_KEY, JSON.stringify({
-    date: TODAY,
-    player: {
-      class:       player.class,
-      maxHp:       player.maxHp,
-      atk:         player.atk,
-      def:         player.def,
-      level:       player.level,
-      xp:          player.xp,
-      xpToNext:    player.xpToNext,
-      activePerks: player.activePerks ?? [],
-      // passives
-      lifesteal:   player.lifesteal,
-      fastSpecial: player.fastSpecial,
-      toughBlock:  player.toughBlock,
-      goldBonus:   player.goldBonus,
-      alwaysDodge: player.alwaysDodge,
-    },
-  }))
+  localStorage.setItem(DAILY_HERO_KEY, JSON.stringify({ date: TODAY, player: buildHeroSnapshot(player) }))
+}
+
+// Backend-aware async versions used by the game components
+export async function loadDailyHeroAsync() {
+  const profile = JSON.parse(localStorage.getItem('dungeontap_profile') || 'null')
+
+  if (profile?.name) {
+    try {
+      const r = await fetch(`/api/daily-dungeon/hero?name=${encodeURIComponent(profile.name)}`)
+      if (r.ok) {
+        const data = await r.json()
+        if (data.hero) {
+          saveDailyHero(data.hero) // cache locally
+          return data.hero
+        }
+      }
+    } catch {} // offline — fall through to localStorage
+  }
+
+  return loadDailyHero()
+}
+
+export async function saveDailyHeroAsync(player) {
+  saveDailyHero(player) // always persist locally first
+
+  const profile = JSON.parse(localStorage.getItem('dungeontap_profile') || 'null')
+  if (!profile?.name || !profile?.pin) return // anonymous user — localStorage only
+
+  try {
+    await fetch('/api/daily-dungeon/hero', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: profile.name, pin: profile.pin, hero: buildHeroSnapshot(player) }),
+    })
+  } catch {} // silent — localStorage is the safety net
 }
 
 // ─── Run History ──────────────────────────────────────────────────────────────
@@ -518,25 +556,44 @@ function applyItemEffect(player, item) {
   }
 }
 
-// Outer shell: fetches daily seed + loads saved daily hero before starting
+// Outer shell: fetches daily seed + hero (backend → localStorage fallback) before starting
 export default function Game() {
   const [params] = useSearchParams()
   const isDaily = params.get('mode') === 'daily'
   const playerClass = sessionStorage.getItem('playerClass') || 'warrior'
-  const [seed, setSeed] = useState(null)
+  const [ready, setReady]       = useState(false)
+  const [seed, setSeed]         = useState(null)
+  const [savedHero, setSavedHero] = useState(null)
 
   useEffect(() => {
-    if (isDaily) {
-      fetch('/api/daily-dungeon/seed')
-        .then(r => r.json())
-        .then(d => setSeed(d.seed))
-        .catch(() => setSeed(getDailySeed()))
-    } else {
-      setSeed(Math.floor(Math.random() * 0xFFFFFF))
+    async function init() {
+      // 1. Resolve seed
+      let resolvedSeed
+      if (isDaily) {
+        try {
+          const r = await fetch('/api/daily-dungeon/seed')
+          const d = await r.json()
+          resolvedSeed = d.seed
+        } catch {
+          resolvedSeed = getDailySeed()
+        }
+      } else {
+        resolvedSeed = Math.floor(Math.random() * 0xFFFFFF)
+      }
+      setSeed(resolvedSeed)
+
+      // 2. Load daily hero (backend first, localStorage fallback)
+      if (isDaily) {
+        const hero = await loadDailyHeroAsync()
+        setSavedHero(hero)
+      }
+
+      setReady(true)
     }
+    init()
   }, []) // eslint-disable-line
 
-  if (seed === null) {
+  if (!ready) {
     return (
       <div className="flex items-center justify-center h-full bg-dungeon">
         <div className="pixel text-gold text-xs animate-pulse">LADE DUNGEON...</div>
@@ -544,7 +601,6 @@ export default function Game() {
     )
   }
 
-  const savedHero = isDaily ? loadDailyHero() : null
   return <GameInner playerClass={playerClass} seed={seed} isDaily={isDaily} savedHero={savedHero} />
 }
 
@@ -555,10 +611,17 @@ function GameInner({ playerClass, seed, isDaily, savedHero }) {
   const isReturningDaily = isDaily && savedHero !== null
   const [state, dispatch] = useReducer(reducer, null, () => initRun(playerClass, seed, savedHero, isDaily && !isStory, isStory))
 
-  // Save daily hero whenever the run ends
+  // Sync daily hero to backend on every floor advance (cross-device support)
+  useEffect(() => {
+    if (isDaily && !isStory && state.player.floor > 1) {
+      saveDailyHeroAsync(state.player)
+    }
+  }, [state.player.floor]) // eslint-disable-line
+
+  // Save daily hero + run history when run ends
   useEffect(() => {
     if (state.phase === 'game_over' || state.phase === 'victory_run' || state.phase === 'story_complete') {
-      if (isDaily && !isStory) saveDailyHero(state.player)
+      if (isDaily && !isStory) saveDailyHeroAsync(state.player)
       saveRunToHistory(state.player, state.phase === 'victory_run' || state.phase === 'story_complete')
     }
   }, [state.phase]) // eslint-disable-line
