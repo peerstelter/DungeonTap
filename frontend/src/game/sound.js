@@ -97,4 +97,18 @@ export const sfx = {
     tone({ freq: 800, freqEnd: 400, type: 'square',   dur: 0.08, vol: 0.4 })
     tone({ freq: 180, freqEnd: 100, type: 'sawtooth', dur: 0.15, vol: 0.45, delay: 0.06 })
   },
+  midBoss() {
+    tone({ freq: 110, type: 'sawtooth', dur: 0.8,  vol: 0.30 })
+    noise({ dur: 0.15, vol: 0.5, cutoff: 300, delay: 0.4 })
+    noise({ dur: 0.2,  vol: 0.6, cutoff: 200, delay: 0.7 })
+    tone({ freq: 90, freqEnd: 50, type: 'square', dur: 0.4, vol: 0.35, delay: 0.8 })
+  },
+  poison() {
+    tone({ freq: 220, freqEnd: 180, type: 'sine', dur: 0.15, vol: 0.2 })
+    tone({ freq: 180, freqEnd: 140, type: 'sine', dur: 0.15, vol: 0.15, delay: 0.12 })
+  },
+  burn() {
+    noise({ dur: 0.1, vol: 0.35, cutoff: 1500 })
+    tone({ freq: 440, freqEnd: 220, type: 'sawtooth', dur: 0.12, vol: 0.2, delay: 0.05 })
+  },
 }

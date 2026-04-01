@@ -17,6 +17,8 @@ export function createCombatState(player, monster) {
     enemyMoveIndex: 0,
     dodgeBonus: false,
     shieldActive: false,    // warrior block_counter: auto-blocks next hit
+    statusEffects: [],   // effects on player: [{ type: 'poison', turnsLeft: 3 }]
+    monsterStatus: [],   // effects on monster: [{ type: 'burn',   turnsLeft: 3 }]
   }
 }
 
@@ -25,6 +27,8 @@ export function applyPlayerAction(state, action, timingBonus = 1.0) {
   if (state.phase !== 'player_turn') return state
 
   let { player, monster, log, specialBar, dodgeBonus } = state
+  let monsterStatus = state.monsterStatus ?? []
+  let statusEffects = state.statusEffects ?? []
 
   // fastSpecial perk: +35% special charge per hit
   const specialGain = player.fastSpecial ? 30 : 22
@@ -65,7 +69,7 @@ export function applyPlayerAction(state, action, timingBonus = 1.0) {
             player = { ...player, hp: Math.min(player.maxHp, player.hp + heal) }
           }
           if (monster.hp <= 0) {
-            return { ...state, phase: 'victory', player, monster: { ...monster, hp: 0 }, log, specialBar }
+            return { ...state, phase: 'victory', player, monster: { ...monster, hp: 0 }, log, specialBar, statusEffects, monsterStatus: [] }
           }
           // Transition to telegraph with shieldActive flag — next hit auto-blocked
           return {
@@ -76,6 +80,8 @@ export function applyPlayerAction(state, action, timingBonus = 1.0) {
             pendingEnemyMove: nextEnemyMove(state),
             dodgeBonus: false,
             shieldActive: true,
+            statusEffects,
+            monsterStatus,
           }
         }
 
@@ -98,6 +104,8 @@ export function applyPlayerAction(state, action, timingBonus = 1.0) {
             const heal = Math.max(1, Math.round(totalDmg * 0.08))
             player = { ...player, hp: Math.min(player.maxHp, player.hp + heal) }
           }
+          // Fireball inflicts burn on the monster
+          monsterStatus = addStatus(monsterStatus, { type: 'burn', turnsLeft: 3 })
           break
         }
 
@@ -141,7 +149,7 @@ export function applyPlayerAction(state, action, timingBonus = 1.0) {
       }
 
       if (monster.hp <= 0) {
-        return { ...state, phase: 'victory', player, monster: { ...monster, hp: 0 }, log, specialBar }
+        return { ...state, phase: 'victory', player, monster: { ...monster, hp: 0 }, log, specialBar, statusEffects, monsterStatus: [] }
       }
       break
     }
@@ -151,7 +159,7 @@ export function applyPlayerAction(state, action, timingBonus = 1.0) {
   }
 
   if (monster.hp <= 0) {
-    return { ...state, phase: 'victory', player, monster: { ...monster, hp: 0 }, log, specialBar }
+    return { ...state, phase: 'victory', player, monster: { ...monster, hp: 0 }, log, specialBar, statusEffects, monsterStatus: [] }
   }
 
   return {
@@ -165,6 +173,8 @@ export function applyPlayerAction(state, action, timingBonus = 1.0) {
     pendingEnemyMove: nextEnemyMove(state),
     dodgeBonus: action === 'dodge',
     shieldActive: false,
+    statusEffects,
+    monsterStatus,
   }
 }
 
@@ -182,6 +192,8 @@ export function resolveEnemyAttack(state) {
   if (state.phase !== 'enemy_attack' && state.phase !== 'enemy_telegraph') return state
 
   let { player, monster, log, pendingEnemyMove, lastPlayerAction, dodgeBonus, shieldActive } = state
+  let statusEffects = state.statusEffects ?? []
+  let monsterStatus = state.monsterStatus ?? []
 
   const move = pendingEnemyMove
   let rawDmg = calcEnemyDamage(monster, move)
@@ -230,11 +242,44 @@ export function resolveEnemyAttack(state) {
 
   // Shield counter may have finished the monster
   if (monster.hp <= 0 && shieldActive) {
-    return { ...state, phase: 'victory', player, monster: { ...monster, hp: 0 }, log, shieldActive: false }
+    return { ...state, phase: 'victory', player, monster: { ...monster, hp: 0 }, log, statusEffects, monsterStatus: [], shieldActive: false }
+  }
+
+  // Apply drain → poison on player if not blocked/dodged
+  if (move === 'drain' && dmg > 0 && lastPlayerAction !== 'block' && !shieldActive) {
+    statusEffects = addStatus(statusEffects, { type: 'poison', turnsLeft: 3 })
+    log = [...log, { type: 'status_apply', effect: 'poison', target: 'player' }]
+  }
+
+  // Tick monster burn status
+  const burnTick = monsterStatus.find(e => e.type === 'burn')
+  if (burnTick) {
+    const burnDmg = Math.max(1, Math.round(monster.maxHp * 0.05))
+    monster = { ...monster, hp: Math.max(0, monster.hp - burnDmg) }
+    log = [...log, { type: 'status_tick', effect: 'burn', dmg: burnDmg, target: 'monster' }]
+    monsterStatus = monsterStatus
+      .map(e => e.type === 'burn' ? { ...e, turnsLeft: e.turnsLeft - 1 } : e)
+      .filter(e => e.turnsLeft > 0)
+  }
+
+  // Tick player poison status
+  const poisonTick = statusEffects.find(e => e.type === 'poison')
+  if (poisonTick) {
+    const poisonDmg = Math.max(1, Math.round(player.maxHp * 0.04))
+    player = { ...player, hp: Math.max(1, player.hp - poisonDmg) }
+    log = [...log, { type: 'status_tick', effect: 'poison', dmg: poisonDmg, target: 'player' }]
+    statusEffects = statusEffects
+      .map(e => e.type === 'poison' ? { ...e, turnsLeft: e.turnsLeft - 1 } : e)
+      .filter(e => e.turnsLeft > 0)
+  }
+
+  // Check if monster died from burn
+  if (monster.hp <= 0) {
+    return { ...state, phase: 'victory', player, monster: { ...monster, hp: 0 }, log, statusEffects, monsterStatus: [], shieldActive: false }
   }
 
   if (player.hp <= 0) {
-    return { ...state, phase: 'defeat', player: { ...player, hp: 0 }, monster, log }
+    return { ...state, phase: 'defeat', player: { ...player, hp: 0 }, monster, log, statusEffects, monsterStatus }
   }
 
   return {
@@ -248,6 +293,8 @@ export function resolveEnemyAttack(state) {
     dodgeBonus: false,
     shieldActive: false,
     enemyMoveIndex: state.enemyMoveIndex + 1,
+    statusEffects,
+    monsterStatus,
   }
 }
 
@@ -275,6 +322,14 @@ export const ATTACK_LABELS = {
   rage:        { label: '⚠⚠ WUTANFALL',     color: 'text-red-600',    warn: true,  dodgeable: false },
   fire_breath: { label: '🔥 FEUERATEM',      color: 'text-orange-500', warn: true,  dodgeable: false },
   drain:       { label: '🩸 LEBENSENTZUG',   color: 'text-pink-400',   warn: false, dodgeable: true  },
+}
+
+function addStatus(effects, newEffect) {
+  // Don't stack — refresh duration if already present
+  if (effects.find(e => e.type === newEffect.type)) {
+    return effects.map(e => e.type === newEffect.type ? { ...e, turnsLeft: Math.max(e.turnsLeft, newEffect.turnsLeft) } : e)
+  }
+  return [...effects, newEffect]
 }
 
 function randInt(min, max) {

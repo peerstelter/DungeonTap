@@ -146,6 +146,96 @@ export const MONSTERS = {
     attackPattern: ['normal', 'heavy', 'fire_breath', 'normal', 'rage', 'fire_breath'],
     attackDelay: 2400,
   },
+  // ─── Deep Floor Monsters (floors 15+) ──────────────────────────────────────
+  wraith: {
+    id: 'wraith',
+    name: 'Geist',
+    icon: '👻',
+    hp: 160,
+    atk: 42,
+    def: 4,
+    xp: 90,
+    loot: [{ item: 'gold', amount: [35, 65], chance: 1.0 }],
+    attackPattern: ['quick', 'normal', 'quick', 'heavy'],
+    attackDelay: 1800,
+  },
+  lich: {
+    id: 'lich',
+    name: 'Lich',
+    icon: '🧟',
+    hp: 200,
+    atk: 48,
+    def: 6,
+    xp: 110,
+    loot: [{ item: 'gold', amount: [45, 80], chance: 1.0 }],
+    attackPattern: ['normal', 'drain', 'fire_breath', 'heavy', 'drain'],
+    attackDelay: 2200,
+  },
+  demon: {
+    id: 'demon',
+    name: 'Dämon',
+    icon: '😈',
+    hp: 240,
+    atk: 55,
+    def: 10,
+    xp: 140,
+    loot: [{ item: 'gold', amount: [60, 100], chance: 1.0 }],
+    attackPattern: ['normal', 'rage', 'fire_breath', 'heavy', 'rage'],
+    attackDelay: 2600,
+  },
+  // ─── Mid-Boss Pool ───────────────────────────────────────────────────────────
+  cave_troll: {
+    id: 'cave_troll',
+    name: 'Höhlentroll',
+    icon: '👾',
+    hp: 320,
+    atk: 36,
+    def: 12,
+    xp: 150,
+    isMidBoss: true,
+    loot: [{ item: 'gold', amount: [50, 90], chance: 1.0 }],
+    attackPattern: ['heavy', 'normal', 'rage', 'heavy', 'normal', 'rage'],
+    attackDelay: 2800,
+  },
+  crypt_lord: {
+    id: 'crypt_lord',
+    name: 'Gruftherr',
+    icon: '💀',
+    hp: 400,
+    atk: 42,
+    def: 14,
+    xp: 200,
+    isMidBoss: true,
+    loot: [{ item: 'gold', amount: [70, 110], chance: 1.0 }],
+    attackPattern: ['normal', 'drain', 'heavy', 'rage', 'drain', 'fire_breath'],
+    attackDelay: 2600,
+  },
+  shadow_mage: {
+    id: 'shadow_mage',
+    name: 'Schattenmagier',
+    icon: '🧙',
+    hp: 360,
+    atk: 50,
+    def: 8,
+    xp: 250,
+    isMidBoss: true,
+    loot: [{ item: 'gold', amount: [90, 140], chance: 1.0 }],
+    attackPattern: ['quick', 'fire_breath', 'normal', 'fire_breath', 'heavy', 'drain'],
+    attackDelay: 2200,
+  },
+  infernal_knight: {
+    id: 'infernal_knight',
+    name: 'Infernokrieger',
+    icon: '🔱',
+    hp: 500,
+    atk: 58,
+    def: 18,
+    xp: 320,
+    isMidBoss: true,
+    loot: [{ item: 'gold', amount: [110, 180], chance: 1.0 }],
+    attackPattern: ['heavy', 'rage', 'fire_breath', 'heavy', 'rage', 'normal', 'fire_breath'],
+    attackDelay: 2400,
+  },
 }
 
 // Tier 1: floor 1–3   → easy intro
@@ -157,7 +247,10 @@ export const FLOOR_ENCOUNTERS = [
   { floors: [5, 7], pool: ['skeleton', 'dark_elf', 'goblin'] },
   { floors: [8, 10], pool: ['orc', 'stone_golem', 'dark_elf'] },
   { floors: [11, 13], pool: ['vampire', 'dragon_whelp', 'stone_golem'] },
-  { floors: [14, 99], pool: ['dragon_whelp', 'vampire', 'boss_dragon'] },
+  { floors: [14, 19], pool: ['dragon_whelp', 'vampire', 'dragon_whelp'] },
+  { floors: [20, 24], pool: ['wraith', 'dragon_whelp', 'lich'] },
+  { floors: [25, 29], pool: ['lich', 'demon', 'wraith'] },
+  { floors: [30, 99], pool: ['demon', 'lich', 'demon'] },
 ]
 
 // Elite rooms: same pool as normal but ×1.5 stats + 1.5× XP/gold + rage attack injected
@@ -185,6 +278,26 @@ export function getEliteMonsterForFloor(floor) {
       : l
     ),
     attackPattern: pattern,
+  }
+}
+
+// Mid-boss pool: rotates by (floor / 10) index
+const MID_BOSS_POOL = ['cave_troll', 'crypt_lord', 'shadow_mage', 'infernal_knight']
+
+export function getMidBossForFloor(floor) {
+  const idx = Math.floor(floor / 10) - 1
+  const id = MID_BOSS_POOL[idx % MID_BOSS_POOL.length]
+  const base = MONSTERS[id]
+  const scale = Math.min(3.0, 1 + (floor - 1) * 0.06)
+  const xpScale = Math.min(4.0, 1 + (floor - 1) * 0.07)
+  return {
+    ...base,
+    hp:    Math.round(base.hp * scale),
+    maxHp: Math.round(base.hp * scale),
+    atk:   Math.round(base.atk * scale),
+    def:   Math.round(base.def * scale),
+    xp:    Math.round(base.xp * xpScale),
+    isMidBoss: true,
   }
 }
 

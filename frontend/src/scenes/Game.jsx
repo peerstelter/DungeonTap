@@ -2,8 +2,8 @@ import { useState, useEffect, useReducer, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CLASSES } from '../game/classes'
-import { getMonsterForFloor, getEliteMonsterForFloor } from '../game/monsters'
-import { generateDungeon, getDailySeed, ROOM_TYPES } from '../game/dungeon'
+import { getMonsterForFloor, getEliteMonsterForFloor, getMidBossForFloor } from '../game/monsters'
+import { generateDungeon, generateInfiniteDungeon, getRoomAtFloor, getDailySeed, ROOM_TYPES, getBiome, BIOMES } from '../game/dungeon'
 import { createCombatState, applyPlayerAction, applyBlock, applyDodge, resolveEnemyAttack, ATTACK_LABELS } from '../game/combat'
 import { attachSwipeListener } from '../game/swipe'
 import { sfx } from '../game/sound'
@@ -95,11 +95,40 @@ export function saveDailyHero(player) {
   }))
 }
 
+// ─── Run History ──────────────────────────────────────────────────────────────
+
+const RUN_HISTORY_KEY = 'dungeontap_run_history'
+const MAX_HISTORY = 5
+
+export function saveRunToHistory(player, won) {
+  try {
+    const history = JSON.parse(localStorage.getItem(RUN_HISTORY_KEY) || '[]')
+    const entry = {
+      date: new Date().toLocaleDateString('de-DE'),
+      class: player.class,
+      floor: player.floor,
+      level: player.level,
+      kills: player.kills,
+      gold: player.gold,
+      perks: player.activePerks ?? [],
+      won,
+    }
+    const updated = [entry, ...history].slice(0, MAX_HISTORY)
+    localStorage.setItem(RUN_HISTORY_KEY, JSON.stringify(updated))
+  } catch {}
+}
+
+export function loadRunHistory() {
+  try {
+    return JSON.parse(localStorage.getItem(RUN_HISTORY_KEY) || '[]')
+  } catch { return [] }
+}
+
 // ─── Init & State ─────────────────────────────────────────────────────────────
 
-function initRun(playerClass, seed, savedHero = null) {
+function initRun(playerClass, seed, savedHero = null, isInfinite = false) {
   const cls = CLASSES[playerClass]
-  const dungeon = generateDungeon(seed)
+  const dungeon = isInfinite ? generateInfiniteDungeon(seed) : generateDungeon(seed)
 
   let player
   if (savedHero) {
@@ -154,10 +183,15 @@ function reducer(state, action) {
         const combat = createCombatState(state.player, monster)
         return { ...state, phase: 'combat', combat }
       }
+      if (room.type === 'mid_boss') {
+        const monster = getMidBossForFloor(state.player.floor)
+        const combat = createCombatState(state.player, monster)
+        return { ...state, phase: 'boss_intro', combat, isMidBoss: true }
+      }
       if (room.type === 'boss') {
         const monster = getMonsterForFloor(state.player.floor, true)
         const combat = createCombatState(state.player, monster)
-        return { ...state, phase: 'boss_intro', combat }
+        return { ...state, phase: 'boss_intro', combat, isMidBoss: false }
       }
       if (room.type === 'event') {
         const event = rollEvent()
@@ -349,10 +383,18 @@ function checkLevelUp(player) {
 
 function advanceFloor(state) {
   const nextIndex = state.floorIndex + 1
-  if (nextIndex >= state.dungeon.rooms.length) {
+
+  // Infinite daily dungeon: generate next room on demand
+  let dungeon = markCleared(state.dungeon, state.floorIndex)
+  if (dungeon.infinite && nextIndex >= dungeon.rooms.length) {
+    const nextFloor = nextIndex + 1 // floor numbers are 1-based
+    const newRoom = getRoomAtFloor(dungeon.seed, nextFloor)
+    dungeon = { ...dungeon, rooms: [...dungeon.rooms, newRoom] }
+  }
+
+  if (nextIndex >= dungeon.rooms.length && !dungeon.infinite) {
     return { ...state, phase: 'victory_run' }
   }
-  const dungeon = markCleared(state.dungeon, state.floorIndex)
   const basePlayer = { ...state.player, floor: state.player.floor + 1 }
   const { player, didLevel } = checkLevelUp(basePlayer)
   if (didLevel) {
@@ -407,12 +449,13 @@ export default function Game() {
 function GameInner({ playerClass, seed, isDaily, savedHero }) {
   const navigate = useNavigate()
   const isReturningDaily = isDaily && savedHero !== null
-  const [state, dispatch] = useReducer(reducer, null, () => initRun(playerClass, seed, savedHero))
+  const [state, dispatch] = useReducer(reducer, null, () => initRun(playerClass, seed, savedHero, isDaily))
 
   // Save daily hero whenever the run ends
   useEffect(() => {
-    if (isDaily && (state.phase === 'game_over' || state.phase === 'victory_run')) {
-      saveDailyHero(state.player)
+    if (state.phase === 'game_over' || state.phase === 'victory_run') {
+      if (isDaily) saveDailyHero(state.player)
+      saveRunToHistory(state.player, state.phase === 'victory_run')
     }
   }, [state.phase]) // eslint-disable-line
   const swipeZoneRef = useRef(null)
@@ -573,6 +616,17 @@ function DungeonMap({ state, onEnter, onQuit, isReturningDaily }) {
 
       <HpBar hp={player.hp} maxHp={player.maxHp} />
 
+      {/* Biome indicator */}
+      {(() => {
+        const biome = getBiome(player.floor)
+        const b = BIOMES[biome]
+        return (
+          <div className={`flex items-center justify-center gap-2 mt-2 px-3 py-1 border ${b.border} text-xs pixel ${b.accent}`}>
+            {biome === 'cave' ? '🪨' : biome === 'crypt' ? '🏚' : biome === 'abyss' ? '🌑' : '🔥'} {b.label.toUpperCase()} — ETAGE {player.floor}
+          </div>
+        )
+      })()}
+
       {/* Daily returning-hero banner */}
       {isReturningDaily && (
         <motion.div
@@ -701,6 +755,23 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
         break
       case 'shield_counter_dmg':
         addFloat(`⚡ -${entry.dmg}`, 'text-cyan-300', true)
+        break
+      case 'status_tick':
+        if (entry.effect === 'poison' && entry.target === 'player') {
+          sfx.poison()
+          setPlayerFlash(true)
+          setTimeout(() => setPlayerFlash(false), 200)
+          addFloat(`☠ -${entry.dmg}`, 'text-green-500', false)
+        }
+        if (entry.effect === 'burn' && entry.target === 'monster') {
+          sfx.burn()
+          setMonsterFlash(true)
+          setTimeout(() => setMonsterFlash(false), 120)
+          addFloat(`🔥 -${entry.dmg}`, 'text-orange-400', true)
+        }
+        break
+      case 'status_apply':
+        if (entry.effect === 'poison') sfx.poison()
         break
       default: break
     }
@@ -864,6 +935,21 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
       {/* Player HUD */}
       <div className="px-4 pb-6 safe-bottom flex flex-col gap-3">
         <HpBar hp={combat.player.hp} maxHp={combat.player.maxHp} />
+        {/* Active status effects */}
+        {(combat.statusEffects?.length > 0 || combat.monsterStatus?.length > 0) && (
+          <div className="flex gap-3 text-xs">
+            {combat.statusEffects?.map(e => (
+              <span key={e.type} className="text-green-500 pixel">
+                {e.type === 'poison' ? '☠' : '?'} {e.turnsLeft}
+              </span>
+            ))}
+            {combat.monsterStatus?.map(e => (
+              <span key={e.type} className="text-orange-400 pixel">
+                {e.type === 'burn' ? '🔥' : '?'} {e.turnsLeft}
+              </span>
+            ))}
+          </div>
+        )}
 
         <div className="flex items-center gap-3">
           <span className="pixel text-xs text-purple-400">SPEZIAL</span>
@@ -921,6 +1007,14 @@ function LogEntry({ entry }) {
     case 'enemy_attack':        return <>Gegner trifft dich für <span className="text-red-400">{entry.dmg}</span></>
     case 'shield_counter':      return <><span className="text-cyan-400">🛡 SCHILDBLOCK!</span> Nur <span className="text-blue-400">{entry.dmg}</span> Schaden</>
     case 'shield_counter_dmg':  return <><span className="text-cyan-300">⚡ Konter!</span> Gegner nimmt <span className="text-cyan-400">{entry.dmg}</span> Schaden</>
+    case 'status_apply':
+      return entry.effect === 'poison'
+        ? <span className="text-green-600">☠ Vergiftet! ({entry.target === 'player' ? 'du' : 'Gegner'})</span>
+        : null
+    case 'status_tick':
+      if (entry.effect === 'poison') return <><span className="text-green-500">☠ Gift</span> – <span className="text-red-400">-{entry.dmg} HP</span></>
+      if (entry.effect === 'burn')   return <><span className="text-orange-500">🔥 Brand</span> trifft Gegner – <span className="text-orange-400">-{entry.dmg}</span></>
+      return null
     default: return null
   }
 }
@@ -1133,10 +1227,10 @@ function LevelUpScreen({ state, onPick }) {
 // ─── Boss Intro Screen ────────────────────────────────────────────────────────
 
 function BossIntroScreen({ state, onFight }) {
-  const { combat } = state
+  const { combat, isMidBoss } = state
   const monster = combat?.monster
 
-  useEffect(() => { sfx.bossIntro() }, [])
+  useEffect(() => { isMidBoss ? sfx.midBoss() : sfx.bossIntro() }, []) // eslint-disable-line
 
   return (
     <div className="flex flex-col items-center justify-center h-full gap-6 px-6 bg-dungeon safe-top safe-bottom overflow-hidden">
@@ -1155,17 +1249,17 @@ function BossIntroScreen({ state, onFight }) {
         transition={{ type: 'spring', stiffness: 160, damping: 12, delay: 0.3 }}
         className="text-8xl"
       >
-        🔥
+        {isMidBoss ? '👑' : '🔥'}
       </motion.div>
 
       {/* Warning flash */}
       <motion.div
-        className="pixel text-red-500 text-xs tracking-widest"
+        className={`pixel text-xs tracking-widest ${isMidBoss ? 'text-yellow-500' : 'text-red-500'}`}
         initial={{ opacity: 0 }}
         animate={{ opacity: [0, 1, 0, 1, 0, 1] }}
         transition={{ delay: 0.6, duration: 1.2 }}
       >
-        ⚠ BOSS ENCOUNTER ⚠
+        {isMidBoss ? '⚔ ZWISCHEN-BOSS ⚔' : '⚠ BOSS ENCOUNTER ⚠'}
       </motion.div>
 
       {/* Boss name */}
@@ -1188,7 +1282,7 @@ function BossIntroScreen({ state, onFight }) {
         transition={{ delay: 1.4 }}
         className="text-gray-600 text-xs text-center max-w-xs leading-relaxed"
       >
-        Ein uraltes Böses erwacht. Der Boden bebt. Bereite dich auf den Kampf deines Lebens vor.
+        {isMidBoss ? 'Ein mächtiger Wächter versperrt dir den Weg. Bereit dich vor.' : 'Ein uraltes Böses erwacht. Der Boden bebt. Bereite dich auf den Kampf deines Lebens vor.'}
       </motion.p>
 
       {/* Fight button */}
@@ -1198,7 +1292,7 @@ function BossIntroScreen({ state, onFight }) {
         transition={{ delay: 1.8, type: 'spring' }}
         whileTap={{ scale: 0.96 }}
         onClick={onFight}
-        className="w-full max-w-xs py-5 pixel text-sm border-2 border-red-600 bg-red-950 text-red-200 active:bg-red-900"
+        className={`w-full max-w-xs py-5 pixel text-sm border-2 ${isMidBoss ? 'border-yellow-700 bg-yellow-950 text-yellow-200' : 'border-red-600 bg-red-950 text-red-200'} active:bg-red-900`}
       >
         KÄMPFEN →
       </motion.button>
@@ -1411,6 +1505,35 @@ function RunEnd({ state, won, isDaily, onRetry, onLeaderboard, onMenu }) {
       </motion.div>
 
       {score != null && <div className="text-gold pixel text-xs">Score: {score}</div>}
+
+      {/* Run History */}
+      {(() => {
+        const history = loadRunHistory()
+        if (history.length === 0) return null
+        return (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.4 }}
+            className="w-full max-w-xs"
+          >
+            <div className="text-gray-700 text-xs pixel mb-2">LETZTE RUNS</div>
+            <div className="flex flex-col gap-1">
+              {history.slice(0, 3).map((run, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs border border-dungeon-border bg-dungeon-dark px-3 py-2">
+                  <span className={run.won ? 'text-gold' : 'text-gray-600'}>
+                    {run.won ? '🏅' : '💀'}
+                  </span>
+                  <span className="text-gray-500 flex-1">
+                    {run.class} · Etage {run.floor} · LV{run.level}
+                  </span>
+                  <span className="text-gray-700">{run.date}</span>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )
+      })()}
 
       {!submitted ? (
         <div className="flex flex-col gap-3 w-full max-w-xs">
