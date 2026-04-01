@@ -3,9 +3,19 @@
 @tailwind utilities;
 
 @layer base {
-  html, body, #root {
+  /* -webkit-fill-available is the iOS Safari fix for "100vh includes the
+     URL bar height" — without it, the bottom of the screen gets clipped.
+     100dvh (dynamic viewport height) is the modern equivalent, supported
+     from iOS 15.4+. We stack both so older devices fall back gracefully. */
+  html {
+    height: -webkit-fill-available;
+    height: 100%;
+  }
+  body, #root {
+    height: -webkit-fill-available;
     height: 100%;
     overflow: hidden;
+    overscroll-behavior: none;   /* prevents iOS rubber-band scroll */
     background-color: #0a0a0f;
     color: #e5e7eb;
     touch-action: none;

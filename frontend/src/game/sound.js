@@ -1,9 +1,12 @@
 // Web Audio API synthesizer — no audio files, all procedural
 // Haptic feedback runs alongside every sfx call via navigator.vibrate()
 
+// iOS Safari has never implemented the Web Vibration API — navigator.vibrate
+// is undefined there. This is not a permissions issue; Apple simply chose not
+// to ship it. The check below silently no-ops on iOS and desktop browsers that
+// don't support vibration, so no errors are thrown.
 function vibe(pattern) {
-  // Only on touch devices that support the Vibration API
-  if (typeof navigator !== 'undefined' && navigator.vibrate) {
+  if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
     navigator.vibrate(pattern)
   }
 }
@@ -25,10 +28,9 @@ export function unlockAudio() {
     src.start(0)
   }).catch(() => {})
 
-  // Prime the Vibration API on first user gesture.
-  // Chrome Android requires vibrate() to be called once from a gesture
-  // context before subsequent calls in async code work reliably.
-  if (typeof navigator !== 'undefined' && navigator.vibrate) {
+  // Prime the Vibration API on first user gesture (Android Chrome only —
+  // iOS doesn't support navigator.vibrate at all).
+  if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
     navigator.vibrate(1) // 1ms — imperceptible, just primes the API
   }
 }

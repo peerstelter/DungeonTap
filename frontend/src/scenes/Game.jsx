@@ -673,9 +673,14 @@ function GameInner({ playerClass, seed, isDaily, savedHero, modifier }) {
   const telegraphTimerRef = useRef(null)
 
   // Auto-resolve enemy attack after telegraph window.
-  // Also handles PWA background/foreground: browsers throttle setTimeout when
-  // backgrounded, so we listen for visibilitychange and resolve immediately on
-  // return — prevents the game from getting stuck in enemy_telegraph forever.
+  // PWA background recovery: browsers (especially iOS Safari) throttle or
+  // fully suspend setTimeout when backgrounded. We use three complementary
+  // events to guarantee resolution when the app returns to the foreground:
+  //   • visibilitychange — standard (Chrome Android, desktop)
+  //   • pageshow          — iOS Safari PWA suspend/resume
+  //   • window focus      — fallback for any remaining edge cases
+  // Double-dispatch is safe: resolveEnemyAttack() returns unchanged state
+  // if combat.phase is no longer 'enemy_telegraph'.
   useEffect(() => {
     if (state.phase !== 'combat' || state.combat?.phase !== 'enemy_telegraph') return
 
@@ -683,17 +688,23 @@ function GameInner({ playerClass, seed, isDaily, savedHero, modifier }) {
       dispatch({ type: 'RESOLVE_ENEMY' })
     }, TELEGRAPH_MS)
 
-    function onVisible() {
-      if (document.visibilityState === 'visible') {
-        clearTimeout(telegraphTimerRef.current)
-        dispatch({ type: 'RESOLVE_ENEMY' })
-      }
+    function resolveIfStuck() {
+      clearTimeout(telegraphTimerRef.current)
+      dispatch({ type: 'RESOLVE_ENEMY' })
     }
-    document.addEventListener('visibilitychange', onVisible)
+    function onVisibilityChange() {
+      if (document.visibilityState === 'visible') resolveIfStuck()
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('pageshow', resolveIfStuck)       // iOS PWA resume
+    window.addEventListener('focus', resolveIfStuck)          // fallback
 
     return () => {
       clearTimeout(telegraphTimerRef.current)
-      document.removeEventListener('visibilitychange', onVisible)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('pageshow', resolveIfStuck)
+      window.removeEventListener('focus', resolveIfStuck)
     }
   }, [state.combat?.phase, state.combat?.pendingEnemyMove]) // eslint-disable-line
 
@@ -1799,7 +1810,7 @@ function RunEnd({ state, won, isDaily, newAchievements = [], onRetry, onLeaderbo
   }, []) // eslint-disable-line
 
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-5 px-6 bg-dungeon safe-top safe-bottom">
+    <div className="flex flex-col items-center h-full gap-5 px-6 py-8 bg-dungeon safe-top safe-bottom overflow-y-auto">
       <motion.div
         initial={{ scale: 0.5, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
