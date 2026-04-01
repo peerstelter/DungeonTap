@@ -5,6 +5,7 @@ import { version } from '../../package.json'
 import { loadStoryProgress } from '../game/story'
 import { getDailyModifier, getDailySeed } from '../game/dungeon'
 import { loadAchievements, ACHIEVEMENTS } from '../game/achievements'
+import { getPrestigePoints } from '../game/prestige'
 
 export default function Menu() {
   const navigate  = useNavigate()
@@ -53,11 +54,12 @@ export default function Menu() {
     }
   }
 
-  const profile       = JSON.parse(localStorage.getItem('dungeontap_profile') || 'null')
-  const today         = new Date().toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' })
-  const dailyModifier = getDailyModifier(getDailySeed())
-  const unlocked      = loadAchievements()
-  const achieveCount  = Object.keys(unlocked).length
+  const profile        = JSON.parse(localStorage.getItem('dungeontap_profile') || 'null')
+  const today          = new Date().toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' })
+  const dailyModifier  = getDailyModifier(getDailySeed())
+  const unlocked       = loadAchievements()
+  const achieveCount   = Object.keys(unlocked).length
+  const prestigePoints = getPrestigePoints()
 
   return (
     <div className="flex flex-col items-center justify-between h-full safe-top safe-bottom px-6 py-10 bg-dungeon">
@@ -118,6 +120,13 @@ export default function Menu() {
           <span>STORY MODE {storyProgress.completed ? '✓' : ''}</span>
           <span className="block text-xs text-gray-500 mt-0.5 font-normal pixel" style={{ fontSize: '0.55rem' }}>
             {storyProgress.completed ? 'ABGESCHLOSSEN!' : `AKT ${Math.max(1, storyProgress.highestAct + 1)} VON 3`}
+          </span>
+        </MenuButton>
+
+        <MenuButton onClick={() => navigate('/prestige')}>
+          <span>PRESTIGE</span>
+          <span className="block text-xs text-gray-500 mt-0.5 font-normal pixel" style={{ fontSize: '0.55rem' }}>
+            ⭐ {prestigePoints} PUNKTE VERFÜGBAR
           </span>
         </MenuButton>
 

@@ -46,10 +46,10 @@
 
 ### 🎮 Gameplay — Priorität 1
 
-- [ ] **Verzweigte Karte (Slay the Spire-Stil)**
+- [x] **Verzweigte Karte (Slay the Spire-Stil)**
   Normaler Modus bekommt eine echte Karte mit mehreren Pfaden statt linearer Abfolge.
   Spieler wählt vor jedem Raum zwischen 2–3 Optionen (Kampf / Event / Rast / Elite etc.).
-  Macht jeden Run einzigartig und erhöht Replayability massiv.
+  9 Layer DAG (Layer 0–7 normal, Layer 8 Boss). Garantierter Shop in Layer 3.
 
 - [ ] **Relikt-System**
   Seltene passive Items die für den gesamten Run gelten — stärker und einzigartiger als Perks.
@@ -67,10 +67,10 @@
   Special: "Seelenentzug" — tötet den Diener für massiven AoE-Schaden + heilt HP.
   Schwach im direkten Kampf, stark durch passiven Schaden.
 
-- [ ] **Prestige / Meta-Progression**
+- [x] **Prestige / Meta-Progression**
   Nach Abschluss eines Runs: kleine dauerhafte Boni freischalten (über alle zukünftigen Runs).
-  Beispiele: +5 Start-HP, 1 extra Perk-Option beim Level-Up, Gold-Startbonus.
-  Maximal 5–7 Stufen damit es nicht overpowered wird.
+  5 Upgrades × 2 Stufen (Veteran +HP, Goldgier +Gold, Kampfgeist +ATK, Härtung +DEF, Studium 4 Perk-Optionen).
+  Punkte via Runs verdienen; Shop im Hauptmenü erreichbar.
 
 ---
 

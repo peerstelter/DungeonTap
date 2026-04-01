@@ -4,8 +4,9 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { CLASSES } from '../game/classes'
 import { STORY, saveStoryProgress } from '../game/story'
 import { getMonsterForFloor, getEliteMonsterForFloor, getMidBossForFloor } from '../game/monsters'
-import { generateDungeon, generateInfiniteDungeon, getRoomAtFloor, getDailySeed, getDailyModifier, ROOM_TYPES, getBiome, BIOMES } from '../game/dungeon'
+import { generateDungeon, generateBranchingDungeon, generateInfiniteDungeon, getRoomAtFloor, getDailySeed, getDailyModifier, ROOM_TYPES, getBiome, BIOMES } from '../game/dungeon'
 import { checkAndUnlockAchievements, ACHIEVEMENTS, loadAchievements } from '../game/achievements'
+import { applyPrestigeBonuses, earnPrestigePoints, addPrestigePoints } from '../game/prestige'
 import { createCombatState, applyPlayerAction, applyBlock, applyDodge, resolveEnemyAttack, ATTACK_LABELS } from '../game/combat'
 import { attachSwipeListener } from '../game/swipe'
 import { sfx, unlockAudio } from '../game/sound'
@@ -35,7 +36,7 @@ function rollPerks(count = 3, activePerks = []) {
   // Passives can only be picked once; stat boosts always available
   const available = PERKS.filter(p => !p.passive || !activePerks.includes(p.id))
   const shuffled = [...available].sort(() => Math.random() - 0.5)
-  return shuffled.slice(0, count).map(p => p.id)
+  return shuffled.slice(0, Math.min(count, available.length)).map(p => p.id)
 }
 
 // ─── Events & Traps ───────────────────────────────────────────────────────────
@@ -166,20 +167,23 @@ export function loadRunHistory() {
 
 // ─── Init & State ─────────────────────────────────────────────────────────────
 
-function initRun(playerClass, seed, savedHero = null, isInfinite = false, isStory = false, modifier = null) {
+function initRun(playerClass, seed, savedHero = null, isInfinite = false, isStory = false, modifier = null, isBranching = false) {
   const cls = CLASSES[playerClass]
+
+  // Branching mode uses an empty room list — rooms added dynamically as player picks nodes
   const dungeon = isStory
     ? { seed: null, rooms: [], storyMode: true }
     : isInfinite
       ? generateInfiniteDungeon(seed)
-      : generateDungeon(seed)
+      : isBranching
+        ? { seed, rooms: [] }
+        : generateDungeon(seed)
 
   let player
   if (savedHero) {
-    // Returning daily attempt: restore character, reset run-specific stats
     player = {
       ...savedHero,
-      hp: savedHero.maxHp,     // full HP for fresh attempt
+      hp: savedHero.maxHp,
       energy: cls.baseEnergy,
       maxEnergy: cls.baseEnergy,
       specialEffect: cls.specialEffect,
@@ -208,13 +212,23 @@ function initRun(playerClass, seed, savedHero = null, isInfinite = false, isStor
       kills: 0,
       items: [],
       activePerks: [],
+      perkOptions: 3,
     }
+    // Apply prestige bonuses (permanent upgrades from previous runs)
+    player = applyPrestigeBonuses(player)
   }
+
+  const branchingMap = isBranching
+    ? { ...generateBranchingDungeon(seed), currentNodeId: null, visitedNodeIds: [] }
+    : null
+
   return {
     dungeon, player,
-    phase: isStory ? 'act_intro' : 'dungeon_map',
+    phase: isStory ? 'act_intro' : isBranching ? 'branching_map' : 'dungeon_map',
     combat: null, floorIndex: 0, pendingPerkIds: null,
     modifier: modifier ?? { id: 'none' },
+    branchingMap,
+    _afterLevelUp: null,
     // Story-specific
     storyAct: 1,
     storySegmentIndex: -1,
@@ -391,7 +405,8 @@ function reducer(state, action) {
           storyPendingSegIdx: null,
         })
       }
-      return { ...state, phase: 'dungeon_map', pendingPerkIds: null, player }
+      const nextPhase = state._afterLevelUp ?? 'dungeon_map'
+      return { ...state, phase: nextPhase, pendingPerkIds: null, player, _afterLevelUp: null }
     }
 
     case 'PICK_PERK': {
@@ -406,7 +421,38 @@ function reducer(state, action) {
           storyPendingSegIdx: null,
         })
       }
-      return { ...state, phase: 'dungeon_map', pendingPerkIds: null, player }
+      const nextPhase = state._afterLevelUp ?? 'dungeon_map'
+      return { ...state, phase: nextPhase, pendingPerkIds: null, player, _afterLevelUp: null }
+    }
+
+    case 'CHOOSE_NODE': {
+      const { nodeId } = action
+      const bm = state.branchingMap
+      if (!bm) return state
+      const node = bm.nodes[nodeId]
+      if (!node) return state
+      // Validate: must be an available next node
+      const available = bm.currentNodeId
+        ? bm.nodes[bm.currentNodeId]?.next ?? []
+        : bm.layers[0]
+      if (!available.includes(nodeId)) return state
+
+      const newRoom = { type: node.type, floor: state.player.floor, cleared: false }
+      const newRooms = [...state.dungeon.rooms, newRoom]
+      const newFloorIndex = newRooms.length - 1
+      const newDungeon = { ...state.dungeon, rooms: newRooms }
+      const newBranchingMap = {
+        ...bm,
+        currentNodeId: nodeId,
+        visitedNodeIds: [...(bm.visitedNodeIds ?? []), nodeId],
+      }
+      return {
+        ...state,
+        dungeon: newDungeon,
+        floorIndex: newFloorIndex,
+        branchingMap: newBranchingMap,
+        phase: 'dungeon_map',
+      }
     }
 
     case 'BUY_ITEM': {
@@ -525,18 +571,44 @@ function advanceFloor(state) {
     const basePlayer = { ...state.player }
     const { player, didLevel } = checkLevelUp(basePlayer)
     if (didLevel) {
-      const pendingPerkIds = rollPerks(3, player.activePerks ?? [])
+      const pendingPerkIds = rollPerks(state.player.perkOptions ?? 3, player.activePerks ?? [])
       const nextSegIdx = (state.storySegmentIndex ?? -1) + 1
       return { ...state, dungeon, phase: 'level_up', player, pendingPerkIds, storyPendingSegIdx: nextSegIdx }
     }
     return resolveStoryContinue({ ...state, dungeon })
   }
 
-  // Normal / infinite mode
   const nextIndex = state.floorIndex + 1
   let dungeon = markCleared(state.dungeon, state.floorIndex)
 
-  // Infinite daily dungeon: generate next room on demand
+  // ── Branching map mode (normal runs) ──────────────────────────────────────
+  if (state.branchingMap) {
+    const bm = state.branchingMap
+    const currentNode = bm.nodes[bm.currentNodeId]
+    const isLastLayer = currentNode?.layer === bm.totalLayers - 1
+
+    const basePlayer = { ...state.player, floor: state.player.floor + 1 }
+    const { player, didLevel } = checkLevelUp(basePlayer)
+    const perkCount = state.player.perkOptions ?? 3
+
+    if (isLastLayer) {
+      if (didLevel) {
+        return { ...state, dungeon, phase: 'level_up', player,
+          pendingPerkIds: rollPerks(perkCount, player.activePerks ?? []),
+          _afterLevelUp: 'victory_run' }
+      }
+      return { ...state, dungeon, phase: 'victory_run', player }
+    }
+
+    if (didLevel) {
+      return { ...state, dungeon, phase: 'level_up', floorIndex: nextIndex, player,
+        pendingPerkIds: rollPerks(perkCount, player.activePerks ?? []),
+        _afterLevelUp: 'branching_map' }
+    }
+    return { ...state, dungeon, phase: 'branching_map', floorIndex: nextIndex, player }
+  }
+
+  // ── Infinite daily dungeon ────────────────────────────────────────────────
   if (dungeon.infinite && nextIndex >= dungeon.rooms.length) {
     const nextFloor = nextIndex + 1
     const newRoom = getRoomAtFloor(dungeon.seed, nextFloor)
@@ -550,7 +622,7 @@ function advanceFloor(state) {
   const basePlayer = { ...state.player, floor: state.player.floor + 1 }
   const { player, didLevel } = checkLevelUp(basePlayer)
   if (didLevel) {
-    const pendingPerkIds = rollPerks(3, player.activePerks ?? [])
+    const pendingPerkIds = rollPerks(state.player.perkOptions ?? 3, player.activePerks ?? [])
     return { ...state, phase: 'level_up', floorIndex: nextIndex, dungeon, player, pendingPerkIds }
   }
   return { ...state, phase: 'dungeon_map', floorIndex: nextIndex, dungeon, player }
@@ -638,18 +710,22 @@ export default function Game() {
     )
   }
 
-  return <GameInner playerClass={playerClass} seed={seed} isDaily={isDaily} savedHero={savedHero} modifier={modifier} />
+  // Branching map: only for fresh normal runs (not daily, not story, not shared custom seeds)
+  const isBranching = !isDaily && mode !== 'story' && !urlSeed
+
+  return <GameInner playerClass={playerClass} seed={seed} isDaily={isDaily} savedHero={savedHero} modifier={modifier} isBranching={isBranching} />
 }
 
-function GameInner({ playerClass, seed, isDaily, savedHero, modifier }) {
+function GameInner({ playerClass, seed, isDaily, savedHero, modifier, isBranching }) {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const isStory  = params.get('mode') === 'story'
   const isReturningDaily = isDaily && savedHero !== null
-  const [state, dispatch] = useReducer(reducer, null, () => initRun(playerClass, seed, savedHero, isDaily && !isStory, isStory, modifier))
+  const [state, dispatch] = useReducer(reducer, null, () => initRun(playerClass, seed, savedHero, isDaily && !isStory, isStory, modifier, isBranching && !isStory))
 
   // Newly unlocked achievements to show on RunEnd
   const [newAchievements, setNewAchievements] = useState([])
+  const [prestigePointsEarned, setPrestigePointsEarned] = useState(0)
 
   // Sync daily hero to backend on every floor advance (cross-device support)
   useEffect(() => {
@@ -658,7 +734,7 @@ function GameInner({ playerClass, seed, isDaily, savedHero, modifier }) {
     }
   }, [state.player.floor]) // eslint-disable-line
 
-  // Save daily hero + run history + check achievements when run ends
+  // Save daily hero + run history + check achievements + earn prestige when run ends
   useEffect(() => {
     const isRunEnd = state.phase === 'game_over' || state.phase === 'victory_run' || state.phase === 'story_complete'
     if (isRunEnd) {
@@ -667,6 +743,9 @@ function GameInner({ playerClass, seed, isDaily, savedHero, modifier }) {
       saveRunToHistory(state.player, won)
       const newly = checkAndUnlockAchievements(state.player, won, isDaily)
       if (newly.length > 0) setNewAchievements(newly)
+      const pts = earnPrestigePoints(state.player, won)
+      addPrestigePoints(pts)
+      setPrestigePointsEarned(pts)
     }
   }, [state.phase]) // eslint-disable-line
   const swipeZoneRef = useRef(null)
@@ -791,6 +870,15 @@ function GameInner({ playerClass, seed, isDaily, savedHero, modifier }) {
       />
     )
   }
+  if (state.phase === 'branching_map') {
+    return (
+      <BranchingMapScreen
+        state={state}
+        onChoose={(nodeId) => dispatch({ type: 'CHOOSE_NODE', nodeId })}
+        onQuit={() => navigate('/')}
+      />
+    )
+  }
   if (state.phase === 'dungeon_map' || state.phase === 'story_map') {
     return (
       <DungeonMap
@@ -855,8 +943,10 @@ function GameInner({ playerClass, seed, isDaily, savedHero, modifier }) {
         won={false}
         isDaily={isDaily}
         newAchievements={newAchievements}
+        prestigePointsEarned={prestigePointsEarned}
         onRetry={() => isDaily ? navigate('/game?mode=daily') : navigate('/class-select')}
         onLeaderboard={() => navigate('/leaderboard')}
+        onPrestige={() => navigate('/prestige')}
         onMenu={() => navigate('/')}
       />
     )
@@ -868,8 +958,10 @@ function GameInner({ playerClass, seed, isDaily, savedHero, modifier }) {
         won={true}
         isDaily={isDaily}
         newAchievements={newAchievements}
+        prestigePointsEarned={prestigePointsEarned}
         onRetry={() => isDaily ? navigate('/game?mode=daily') : navigate('/class-select')}
         onLeaderboard={() => navigate('/leaderboard')}
+        onPrestige={() => navigate('/prestige')}
         onMenu={() => navigate('/')}
       />
     )
@@ -1741,7 +1833,7 @@ function TrapScreen({ state, onNext }) {
 
 // ─── Run End (Game Over + Victory) ───────────────────────────────────────────
 
-function RunEnd({ state, won, isDaily, newAchievements = [], onRetry, onLeaderboard, onMenu }) {
+function RunEnd({ state, won, isDaily, newAchievements = [], prestigePointsEarned = 0, onRetry, onLeaderboard, onPrestige, onMenu }) {
   const { player, dungeon } = state
   const profile = JSON.parse(localStorage.getItem('dungeontap_profile') || 'null')
 
@@ -1868,6 +1960,25 @@ function RunEnd({ state, won, isDaily, newAchievements = [], onRetry, onLeaderbo
               ) : null
             })}
           </div>
+        </motion.div>
+      )}
+
+      {/* Prestige points earned */}
+      {prestigePointsEarned > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.6 }}
+          className="flex items-center justify-between w-full max-w-xs border border-amber-900/60 bg-amber-950/20 px-4 py-2"
+        >
+          <span className="text-amber-400 text-xs">⭐ +{prestigePointsEarned} Prestige-Punkte</span>
+          <button
+            onClick={onPrestige}
+            className="pixel text-xs text-amber-500 border border-amber-800 px-2 py-1 active:scale-95"
+            style={{ fontSize: '0.48rem' }}
+          >
+            SHOP
+          </button>
         </motion.div>
       )}
 
@@ -2188,6 +2299,167 @@ function StoryCompleteScreen({ player, onMenu, onLeaderboard }) {
           HAUPTMENÜ
         </button>
       </motion.div>
+    </div>
+  )
+}
+
+// ─── Branching Map Screen ─────────────────────────────────────────────────────
+
+function BranchingMapScreen({ state, onChoose, onQuit }) {
+  const { branchingMap, player } = state
+  const { nodes, layers, totalLayers } = branchingMap
+  const currentNode = branchingMap.currentNodeId ? nodes[branchingMap.currentNodeId] : null
+  const visitedIds = branchingMap.visitedNodeIds ?? []
+
+  // Which node IDs can be chosen next
+  const availableIds = currentNode
+    ? currentNode.next
+    : layers[0]
+
+  const scrollRef = useRef(null)
+  const availableRowRef = useRef(null)
+
+  // Scroll to show available choices when map opens / node changes
+  useEffect(() => {
+    availableRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [branchingMap.currentNodeId])
+
+  // Map layout constants
+  const WIDTH = 300
+  const ROW_HEIGHT = 58
+  const NODE = 42
+  const HALF = NODE / 2
+  const svgH = totalLayers * ROW_HEIGHT + 16
+
+  // Node x-position within a layer
+  function nodeX(layerIds, idx) {
+    const n = layerIds.length
+    if (n === 1) return WIDTH / 2
+    if (n === 2) return (WIDTH / 3) * (idx + 1)
+    return (WIDTH / 4) * (idx + 1)
+  }
+
+  // Pre-compute positions: y=0 = boss layer (displayed at top)
+  const pos = {}
+  layers.forEach((layerIds, layerIdx) => {
+    const displayRow = totalLayers - 1 - layerIdx // boss at top
+    const y = displayRow * ROW_HEIGHT + ROW_HEIGHT / 2
+    layerIds.forEach((id, j) => {
+      pos[id] = { x: nodeX(layerIds, j), y }
+    })
+  })
+
+  // Next layer for scroll target
+  const nextLayer = currentNode ? currentNode.layer + 1 : 0
+
+  return (
+    <div className="flex flex-col h-full safe-top safe-bottom bg-dungeon px-4 py-4">
+      {/* Header */}
+      <div className="flex justify-between items-center mb-3">
+        <button onClick={onQuit} className="text-gray-600 text-xs pixel">✕ AUFGEBEN</button>
+        <div className="pixel text-xs text-center">
+          <span className="text-gold-light">ETAGE {player.floor}</span>
+          <span className="text-gray-700 mx-2">·</span>
+          <span className="text-purple-400">LV{player.level}</span>
+          <span className="text-gray-700 mx-2">·</span>
+          <span className="text-yellow-500">💰 {player.gold}</span>
+        </div>
+        <div className="w-12" />
+      </div>
+
+      <HpBar hp={player.hp} maxHp={player.maxHp} />
+
+      <div className="pixel text-xs text-center mt-2 mb-1 text-gold">
+        {currentNode ? 'WÄHLE DEINEN WEG' : 'BETRETE DEN DUNGEON'}
+      </div>
+
+      {/* Scrollable map */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto flex justify-center py-2">
+        <div style={{ position: 'relative', width: WIDTH, height: svgH, flexShrink: 0 }}>
+          {/* Connection lines */}
+          <svg
+            style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+            width={WIDTH}
+            height={svgH}
+          >
+            {Object.values(nodes).map(node =>
+              node.next.map(nextId => {
+                const a = pos[node.id], b = pos[nextId]
+                if (!a || !b) return null
+                const isPath = visitedIds.includes(node.id) && visitedIds.includes(nextId)
+                const isNext = node.id === branchingMap.currentNodeId && availableIds.includes(nextId)
+                return (
+                  <line
+                    key={`${node.id}-${nextId}`}
+                    x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+                    stroke={isNext ? '#d97706' : isPath ? '#166534' : '#374151'}
+                    strokeWidth={isNext || isPath ? 2 : 1}
+                    strokeDasharray={isNext ? '5 3' : undefined}
+                  />
+                )
+              })
+            )}
+          </svg>
+
+          {/* Nodes */}
+          {Object.values(nodes).map(node => {
+            const p = pos[node.id]
+            if (!p) return null
+            const isAvail = availableIds.includes(node.id)
+            const isVisited = visitedIds.includes(node.id)
+            const isCurrent = node.id === branchingMap.currentNodeId
+            const isNextLayerNode = node.layer === nextLayer
+            const info = ROOM_TYPES[node.type]
+
+            return (
+              <div
+                key={node.id}
+                ref={isAvail && isNextLayerNode && node.id === availableIds[0] ? availableRowRef : null}
+                style={{ position: 'absolute', left: p.x - HALF, top: p.y - HALF, width: NODE, height: NODE }}
+                className={`flex items-center justify-center border-2 transition-all duration-200 select-none
+                  ${isAvail  ? 'border-amber-500 bg-amber-950/60 cursor-pointer' : ''}
+                  ${isCurrent ? 'border-purple-500 bg-purple-950/60' : ''}
+                  ${isVisited && !isCurrent ? 'border-gray-800 bg-gray-950/40 opacity-30' : ''}
+                  ${!isAvail && !isVisited && !isCurrent ? 'border-gray-700 bg-dungeon opacity-70' : ''}
+                `}
+                onClick={() => isAvail && onChoose(node.id)}
+              >
+                <span style={{ fontSize: '1.15rem', lineHeight: 1 }}>
+                  {info?.icon ?? '?'}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Available choices strip — primary interaction on mobile */}
+      {availableIds.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-dungeon-border">
+          <div className="text-gray-600 pixel mb-2" style={{ fontSize: '0.48rem' }}>
+            VERFÜGBARE PFADE
+          </div>
+          <div className="flex gap-2">
+            {availableIds.map(id => {
+              const node = nodes[id]
+              const info = ROOM_TYPES[node?.type]
+              return (
+                <motion.button
+                  key={id}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => onChoose(id)}
+                  className="flex-1 flex flex-col items-center gap-1.5 border-2 border-amber-700 bg-amber-950/30 py-3 active:bg-amber-950/60 transition-colors"
+                >
+                  <span className="text-2xl">{info?.icon ?? '?'}</span>
+                  <span className="pixel text-amber-400" style={{ fontSize: '0.48rem' }}>
+                    {info?.label ?? node?.type}
+                  </span>
+                </motion.button>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

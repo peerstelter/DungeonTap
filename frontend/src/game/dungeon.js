@@ -86,6 +86,90 @@ function pickRoomType(rng, floor, total) {
   return 'treasure'
 }
 
+// ─── Branching Dungeon (Normal Mode) ─────────────────────────────────────────
+// Generates a Slay-the-Spire-style DAG map.
+// 9 layers total: layers 0–7 are normal rooms (2–3 nodes each), layer 8 is the boss (1 node).
+// Each node connects forward to 1–2 nodes in the next layer.
+
+const BRANCH_BOSS_LAYER = 8
+
+function pickBranchRoomType(rng, layer) {
+  // Layer before boss: rest or treasure to prepare
+  if (layer === BRANCH_BOSS_LAYER - 1) return rng() < 0.5 ? 'rest' : 'treasure'
+
+  const roll = rng()
+  if (roll < 0.38) return 'combat'
+  if (roll < 0.52) return 'elite'
+  if (roll < 0.63) return 'event'
+  if (roll < 0.70) return 'trap'
+  if (roll < 0.82) return 'rest'
+  if (roll < 0.92) return 'treasure'
+  return 'shop'
+}
+
+export function generateBranchingDungeon(seed) {
+  const rng = mulberry32(seed)
+  const nodes = {}
+  let counter = 0
+
+  function makeNode(layer, type) {
+    const id = `n${counter++}`
+    nodes[id] = { id, type, layer, next: [] }
+    return id
+  }
+
+  // Build all layers
+  const layers = []
+  for (let layer = 0; layer <= BRANCH_BOSS_LAYER; layer++) {
+    if (layer === BRANCH_BOSS_LAYER) {
+      layers.push([makeNode(layer, 'boss')])
+    } else {
+      const count = Math.floor(rng() * 2) + 2 // 2–3 nodes per layer
+      const layerNodes = []
+      for (let i = 0; i < count; i++) {
+        layerNodes.push(makeNode(layer, pickBranchRoomType(rng, layer)))
+      }
+      // Guarantee at least one shop somewhere in layers 2–5
+      if (layer === 3 && !layerNodes.some(id => nodes[id].type === 'shop')) {
+        nodes[layerNodes[Math.floor(rng() * layerNodes.length)]].type = 'shop'
+      }
+      layers.push(layerNodes)
+    }
+  }
+
+  // Connect nodes: each node gets 1–2 forward connections
+  for (let layer = 0; layer < BRANCH_BOSS_LAYER; layer++) {
+    const curr = layers[layer]
+    const next = layers[layer + 1]
+    const reached = new Set()
+
+    curr.forEach((id, i) => {
+      // Primary: round-robin to spread coverage
+      const primary = next[i % next.length]
+      nodes[id].next.push(primary)
+      reached.add(primary)
+      // Secondary: 50% chance to also connect to an adjacent next-layer node
+      if (next.length > 1 && rng() > 0.5) {
+        const secondary = next[(i + 1) % next.length]
+        if (secondary !== primary) {
+          nodes[id].next.push(secondary)
+          reached.add(secondary)
+        }
+      }
+    })
+
+    // Ensure every next-layer node has at least one incoming connection
+    next.forEach(nextId => {
+      if (!reached.has(nextId)) {
+        const src = curr[Math.floor(rng() * curr.length)]
+        if (!nodes[src].next.includes(nextId)) nodes[src].next.push(nextId)
+      }
+    })
+  }
+
+  return { nodes, layers, totalLayers: BRANCH_BOSS_LAYER + 1 }
+}
+
 // ─── Daily Challenge Modifiers ───────────────────────────────────────────────
 // One modifier per day, derived deterministically from the daily seed.
 
