@@ -34,6 +34,21 @@
   .pixel { font-family: 'Press Start 2P', monospace; }
 }
 
+/* Screen shake — triggered on heavy enemy hits */
+@keyframes screen-shake {
+  0%   { transform: translate(0,0) rotate(0deg); }
+  15%  { transform: translate(-6px, 3px) rotate(-1deg); }
+  30%  { transform: translate(6px, -3px) rotate(1deg); }
+  45%  { transform: translate(-5px, 5px) rotate(-0.5deg); }
+  60%  { transform: translate(5px, -2px) rotate(0.5deg); }
+  75%  { transform: translate(-3px, 3px) rotate(0deg); }
+  90%  { transform: translate(2px, -1px); }
+  100% { transform: translate(0,0); }
+}
+.shake {
+  animation: screen-shake 0.45s cubic-bezier(.36,.07,.19,.97) both;
+}
+
 /* HP / Energy bar base */
 .bar-track {
   @apply h-3 rounded-full bg-dungeon-gray border border-dungeon-border overflow-hidden;

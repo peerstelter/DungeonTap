@@ -86,6 +86,23 @@ function pickRoomType(rng, floor, total) {
   return 'treasure'
 }
 
+// ─── Daily Challenge Modifiers ───────────────────────────────────────────────
+// One modifier per day, derived deterministically from the daily seed.
+
+export const DAILY_MODIFIERS = [
+  { id: 'none',          icon: '⚖️',  title: 'Normaler Tag',     desc: 'Keine besonderen Modifikatoren' },
+  { id: 'double_xp',     icon: '⭐',  title: 'Doppel-XP',        desc: 'Alle Erfahrungspunkte ×2',        xpMult: 2.0 },
+  { id: 'gold_rush',     icon: '💰',  title: 'Goldrausch',        desc: '+50% Gold aus Kämpfen',           goldMult: 1.5 },
+  { id: 'hard_mode',     icon: '💢',  title: 'Grimmiger Tag',     desc: 'Monster-ATK +20%',                monsterAtkMult: 1.2 },
+  { id: 'shield_day',    icon: '🛡️', title: 'Schild-Tag',        desc: 'Block absorbiert 80% Schaden',    blockBonus: true },
+  { id: 'fast_special',  icon: '⚡',  title: 'Kraft-Schub',       desc: 'Specials laden 40% schneller',   specialBonus: true },
+  { id: 'heal_curse',    icon: '💉',  title: 'Heilfluch',         desc: 'Heilräume geben nur 15% HP',      healPct: 0.15 },
+]
+
+export function getDailyModifier(seed) {
+  return DAILY_MODIFIERS[seed % DAILY_MODIFIERS.length]
+}
+
 // Biome theming based on floor depth
 export function getBiome(floor) {
   if (floor < 10)  return 'cave'

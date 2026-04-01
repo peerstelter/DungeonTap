@@ -4,7 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { CLASSES } from '../game/classes'
 import { STORY, saveStoryProgress } from '../game/story'
 import { getMonsterForFloor, getEliteMonsterForFloor, getMidBossForFloor } from '../game/monsters'
-import { generateDungeon, generateInfiniteDungeon, getRoomAtFloor, getDailySeed, ROOM_TYPES, getBiome, BIOMES } from '../game/dungeon'
+import { generateDungeon, generateInfiniteDungeon, getRoomAtFloor, getDailySeed, getDailyModifier, ROOM_TYPES, getBiome, BIOMES } from '../game/dungeon'
+import { checkAndUnlockAchievements, ACHIEVEMENTS, loadAchievements } from '../game/achievements'
 import { createCombatState, applyPlayerAction, applyBlock, applyDodge, resolveEnemyAttack, ATTACK_LABELS } from '../game/combat'
 import { attachSwipeListener } from '../game/swipe'
 import { sfx } from '../game/sound'
@@ -165,7 +166,7 @@ export function loadRunHistory() {
 
 // ─── Init & State ─────────────────────────────────────────────────────────────
 
-function initRun(playerClass, seed, savedHero = null, isInfinite = false, isStory = false) {
+function initRun(playerClass, seed, savedHero = null, isInfinite = false, isStory = false, modifier = null) {
   const cls = CLASSES[playerClass]
   const dungeon = isStory
     ? { seed: null, rooms: [], storyMode: true }
@@ -213,6 +214,7 @@ function initRun(playerClass, seed, savedHero = null, isInfinite = false, isStor
     dungeon, player,
     phase: isStory ? 'act_intro' : 'dungeon_map',
     combat: null, floorIndex: 0, pendingPerkIds: null,
+    modifier: modifier ?? { id: 'none' },
     // Story-specific
     storyAct: 1,
     storySegmentIndex: -1,
@@ -259,25 +261,31 @@ function reducer(state, action) {
   switch (action.type) {
     case 'ENTER_ROOM': {
       const room = state.dungeon.rooms[state.floorIndex]
+      const mod = state.modifier ?? {}
+      // Apply monster ATK modifier if active
+      function scaledMonster(m) {
+        if (!mod.monsterAtkMult) return m
+        return { ...m, atk: Math.round(m.atk * mod.monsterAtkMult) }
+      }
       if (room.type === 'combat') {
-        const monster = getMonsterForFloor(state.player.floor)
+        const monster = scaledMonster(getMonsterForFloor(state.player.floor))
         const combat = createCombatState(state.player, monster)
         return { ...state, phase: 'combat', combat }
       }
       if (room.type === 'elite') {
-        const monster = getEliteMonsterForFloor(state.player.floor)
+        const monster = scaledMonster(getEliteMonsterForFloor(state.player.floor))
         const combat = createCombatState(state.player, monster)
         return { ...state, phase: 'combat', combat }
       }
       if (room.type === 'mid_boss') {
-        const monster = room.bossId
+        const monster = scaledMonster(room.bossId
           ? getMidBossForFloor(state.player.floor, room.bossId)
-          : getMidBossForFloor(state.player.floor)
+          : getMidBossForFloor(state.player.floor))
         const combat = createCombatState(state.player, monster)
         return { ...state, phase: 'boss_intro', combat, isMidBoss: true }
       }
       if (room.type === 'boss') {
-        const monster = getMonsterForFloor(state.player.floor, true)
+        const monster = scaledMonster(getMonsterForFloor(state.player.floor, true))
         const combat = createCombatState(state.player, monster)
         return { ...state, phase: 'boss_intro', combat, isMidBoss: false }
       }
@@ -293,7 +301,8 @@ function reducer(state, action) {
         return { ...state, phase: 'trap', currentTrap: trap, trapDmg: dmg, player }
       }
       if (room.type === 'rest') {
-        const heal = Math.round(state.player.maxHp * 0.3)
+        const restPct = mod.healPct ?? 0.3
+        const heal = Math.round(state.player.maxHp * restPct)
         const healed = Math.min(state.player.maxHp, state.player.hp + heal) - state.player.hp
         return {
           ...state,
@@ -325,8 +334,11 @@ function reducer(state, action) {
       if (state.phase !== 'combat') return state
       const combat = applyPlayerAction(state.combat, action.action, action.timingBonus ?? 1.0)
       if (combat.phase === 'victory') {
-        const xpGain = state.combat.monster.xp
-        const goldGain = rollLootGold(state.combat.monster, state.player)
+        const mod     = state.modifier ?? {}
+        const rawXp   = state.combat.monster.xp
+        const xpGain  = mod.xpMult   ? Math.round(rawXp * mod.xpMult)   : rawXp
+        const rawGold = rollLootGold(state.combat.monster, state.player)
+        const goldGain = mod.goldMult ? Math.round(rawGold * mod.goldMult) : rawGold
         const player = { ...state.player, hp: combat.player.hp, xp: state.player.xp + xpGain, gold: state.player.gold + goldGain, kills: state.player.kills + 1 }
         // go through monster_dying phase first so the death animation can play
         return { ...state, phase: 'monster_dying', combat, player, lastLoot: { xp: xpGain, gold: goldGain } }
@@ -559,17 +571,25 @@ function applyItemEffect(player, item) {
 // Outer shell: fetches daily seed + hero (backend → localStorage fallback) before starting
 export default function Game() {
   const [params] = useSearchParams()
-  const isDaily = params.get('mode') === 'daily'
-  const playerClass = sessionStorage.getItem('playerClass') || 'warrior'
-  const [ready, setReady]       = useState(false)
-  const [seed, setSeed]         = useState(null)
+  const mode        = params.get('mode')       // 'daily' | 'story' | 'custom' | null
+  const urlSeed     = params.get('seed')        // set for shared custom runs
+  const urlClass    = params.get('class')       // set for shared custom runs
+  const isDaily     = mode === 'daily'
+  const playerClass = urlClass || sessionStorage.getItem('playerClass') || 'warrior'
+
+  const [ready, setReady]         = useState(false)
+  const [seed, setSeed]           = useState(null)
   const [savedHero, setSavedHero] = useState(null)
+  const [modifier, setModifier]   = useState(null)
 
   useEffect(() => {
     async function init() {
       // 1. Resolve seed
       let resolvedSeed
-      if (isDaily) {
+      if (urlSeed) {
+        // Shared custom run — use seed from URL directly
+        resolvedSeed = parseInt(urlSeed, 10) || Math.floor(Math.random() * 0xFFFFFF)
+      } else if (isDaily) {
         try {
           const r = await fetch('/api/daily-dungeon/seed')
           const d = await r.json()
@@ -582,7 +602,12 @@ export default function Game() {
       }
       setSeed(resolvedSeed)
 
-      // 2. Load daily hero (backend first, localStorage fallback)
+      // 2. Daily modifier (derived from seed)
+      if (isDaily) {
+        setModifier(getDailyModifier(resolvedSeed))
+      }
+
+      // 3. Load daily hero (backend first, localStorage fallback)
       if (isDaily) {
         const hero = await loadDailyHeroAsync()
         setSavedHero(hero)
@@ -601,15 +626,18 @@ export default function Game() {
     )
   }
 
-  return <GameInner playerClass={playerClass} seed={seed} isDaily={isDaily} savedHero={savedHero} />
+  return <GameInner playerClass={playerClass} seed={seed} isDaily={isDaily} savedHero={savedHero} modifier={modifier} />
 }
 
-function GameInner({ playerClass, seed, isDaily, savedHero }) {
+function GameInner({ playerClass, seed, isDaily, savedHero, modifier }) {
   const navigate = useNavigate()
   const [params] = useSearchParams()
-  const isStory = params.get('mode') === 'story'
+  const isStory  = params.get('mode') === 'story'
   const isReturningDaily = isDaily && savedHero !== null
-  const [state, dispatch] = useReducer(reducer, null, () => initRun(playerClass, seed, savedHero, isDaily && !isStory, isStory))
+  const [state, dispatch] = useReducer(reducer, null, () => initRun(playerClass, seed, savedHero, isDaily && !isStory, isStory, modifier))
+
+  // Newly unlocked achievements to show on RunEnd
+  const [newAchievements, setNewAchievements] = useState([])
 
   // Sync daily hero to backend on every floor advance (cross-device support)
   useEffect(() => {
@@ -618,11 +646,15 @@ function GameInner({ playerClass, seed, isDaily, savedHero }) {
     }
   }, [state.player.floor]) // eslint-disable-line
 
-  // Save daily hero + run history when run ends
+  // Save daily hero + run history + check achievements when run ends
   useEffect(() => {
-    if (state.phase === 'game_over' || state.phase === 'victory_run' || state.phase === 'story_complete') {
+    const isRunEnd = state.phase === 'game_over' || state.phase === 'victory_run' || state.phase === 'story_complete'
+    if (isRunEnd) {
       if (isDaily && !isStory) saveDailyHeroAsync(state.player)
-      saveRunToHistory(state.player, state.phase === 'victory_run' || state.phase === 'story_complete')
+      const won = state.phase === 'victory_run' || state.phase === 'story_complete'
+      saveRunToHistory(state.player, won)
+      const newly = checkAndUnlockAchievements(state.player, won, isDaily)
+      if (newly.length > 0) setNewAchievements(newly)
     }
   }, [state.phase]) // eslint-disable-line
   const swipeZoneRef = useRef(null)
@@ -784,6 +816,7 @@ function GameInner({ playerClass, seed, isDaily, savedHero }) {
         state={state}
         won={false}
         isDaily={isDaily}
+        newAchievements={newAchievements}
         onRetry={() => isDaily ? navigate('/game?mode=daily') : navigate('/class-select')}
         onLeaderboard={() => navigate('/leaderboard')}
         onMenu={() => navigate('/')}
@@ -796,6 +829,7 @@ function GameInner({ playerClass, seed, isDaily, savedHero }) {
         state={state}
         won={true}
         isDaily={isDaily}
+        newAchievements={newAchievements}
         onRetry={() => isDaily ? navigate('/game?mode=daily') : navigate('/class-select')}
         onLeaderboard={() => navigate('/leaderboard')}
         onMenu={() => navigate('/')}
@@ -842,6 +876,18 @@ function DungeonMap({ state, onEnter, onQuit, isReturningDaily, isStory }) {
           </div>
         )
       })()}
+
+      {/* Daily modifier banner */}
+      {state.modifier && state.modifier.id !== 'none' && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mt-2 px-3 py-1.5 border border-amber-800 bg-amber-950/40 text-amber-400 text-xs text-center pixel"
+          style={{ fontSize: '0.5rem' }}
+        >
+          {state.modifier.icon} {state.modifier.title.toUpperCase()} — {state.modifier.desc}
+        </motion.div>
+      )}
 
       {/* Daily returning-hero banner */}
       {isReturningDaily && (
@@ -936,6 +982,10 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
   const [monsterFlash, setMonsterFlash] = useState(false)
   const [playerFlash,  setPlayerFlash]  = useState(false)
 
+  // Screen shake — triggered on heavy hits
+  const [shakeKey, setShakeKey] = useState(0)
+  function triggerShake() { setShakeKey(k => k + 1) }
+
   // Floating damage numbers [{id, text, color, forMonster}]
   const [floats, setFloats] = useState([])
 
@@ -963,11 +1013,15 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
         setTimeout(() => setPlayerFlash(false), 300)
         sfx.hit()
         addFloat(`-${entry.dmg}`, 'text-red-500', false)
+        // Heavy hit shake: if damage > 20% of max HP
+        if (entry.dmg >= Math.round(combat.player.maxHp * 0.20)) triggerShake()
         break
       case 'player_blocked':
         setPlayerFlash(true)
         setTimeout(() => setPlayerFlash(false), 200)
         addFloat(`-${entry.dmg}`, 'text-blue-400', false)
+        // Shake even on blocked heavy attacks (WUCHT / power moves)
+        if (entry.heavy) triggerShake()
         break
       case 'player_grazed':
         setPlayerFlash(true)
@@ -1042,7 +1096,7 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
   }
 
   return (
-    <div className="flex flex-col h-full safe-top safe-bottom bg-dungeon select-none">
+    <div key={shakeKey} className={`flex flex-col h-full safe-top safe-bottom bg-dungeon select-none ${shakeKey > 0 ? 'shake' : ''}`}>
       {/* Player hit flash overlay */}
       <AnimatePresence>
         {playerFlash && (
@@ -1648,15 +1702,29 @@ function TrapScreen({ state, onNext }) {
 
 // ─── Run End (Game Over + Victory) ───────────────────────────────────────────
 
-function RunEnd({ state, won, isDaily, onRetry, onLeaderboard, onMenu }) {
+function RunEnd({ state, won, isDaily, newAchievements = [], onRetry, onLeaderboard, onMenu }) {
   const { player, dungeon } = state
   const profile = JSON.parse(localStorage.getItem('dungeontap_profile') || 'null')
 
-  const [name, setName]       = useState(profile?.name || '')
+  const [name, setName]             = useState(profile?.name || '')
   const [submitted, setSubmitted]   = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [score, setScore]     = useState(null)
+  const [score, setScore]           = useState(null)
   const [pinError, setPinError]     = useState(null)
+  const [shareMsg, setShareMsg]     = useState(null)
+
+  async function shareRun() {
+    const url = `${window.location.origin}/game?mode=custom&seed=${dungeon.seed}&class=${player.class}`
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'DungeonTap – Mein Run', text: `Etage ${player.floor} · LV${player.level} · ${player.kills} Kills`, url })
+      } else {
+        await navigator.clipboard.writeText(url)
+        setShareMsg('Link kopiert!')
+        setTimeout(() => setShareMsg(null), 2500)
+      }
+    } catch {}
+  }
 
   async function submitScore() {
     if (submitting || submitted) return
@@ -1736,6 +1804,34 @@ function RunEnd({ state, won, isDaily, onRetry, onLeaderboard, onMenu }) {
 
       {score != null && <div className="text-gold pixel text-xs">Score: {score}</div>}
 
+      {/* Newly unlocked achievements */}
+      {newAchievements.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9, y: 10 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
+          className="w-full max-w-xs"
+        >
+          <div className="text-yellow-600 text-xs pixel mb-2" style={{ fontSize: '0.5rem' }}>
+            NEUE ERRUNGENSCHAFTEN!
+          </div>
+          <div className="flex flex-col gap-1">
+            {newAchievements.map(id => {
+              const a = ACHIEVEMENTS.find(x => x.id === id)
+              return a ? (
+                <div key={id} className="flex items-center gap-3 border border-gold/40 bg-yellow-950/30 px-3 py-2">
+                  <span className="text-xl">{a.icon}</span>
+                  <div>
+                    <div className="pixel text-gold-light" style={{ fontSize: '0.5rem' }}>{a.title}</div>
+                    <div className="text-gray-500 text-xs" style={{ fontSize: '0.55rem' }}>{a.desc}</div>
+                  </div>
+                </div>
+              ) : null
+            })}
+          </div>
+        </motion.div>
+      )}
+
       {/* Run History */}
       {(() => {
         const history = loadRunHistory()
@@ -1801,6 +1897,23 @@ function RunEnd({ state, won, isDaily, onRetry, onLeaderboard, onMenu }) {
           <button onClick={onLeaderboard} className="py-4 pixel text-xs border-2 border-gold text-gold active:scale-95">
             BESTENLISTE
           </button>
+          {dungeon?.seed && (
+            <button
+              onClick={shareRun}
+              className="py-3 pixel text-xs border border-dungeon-border text-gray-400 active:scale-95 relative"
+            >
+              {shareMsg ? (
+                <motion.span
+                  key="msg"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="text-green-400"
+                >
+                  ✓ {shareMsg}
+                </motion.span>
+              ) : '🔗 RUN TEILEN'}
+            </button>
+          )}
           <button onClick={onRetry} className="py-4 pixel text-xs border border-dungeon-border text-gray-400 active:scale-95">
             {isDaily ? 'NOCHMAL (HELD BLEIBT)' : 'NOCHMAL'}
           </button>

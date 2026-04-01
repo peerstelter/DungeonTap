@@ -3,11 +3,16 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { version } from '../../package.json'
 import { loadStoryProgress } from '../game/story'
+import { getDailyModifier, getDailySeed } from '../game/dungeon'
+import { loadAchievements, ACHIEVEMENTS } from '../game/achievements'
 
 export default function Menu() {
   const navigate  = useNavigate()
-  const [online, setOnline]     = useState(navigator.onLine)
+  const [online, setOnline]         = useState(navigator.onLine)
   const [installEvt, setInstallEvt] = useState(null)
+  const [notifStatus, setNotifStatus] = useState(
+    typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
+  )
   const storyProgress = loadStoryProgress()
 
   // Track online/offline status
@@ -32,8 +37,27 @@ export default function Menu() {
     installEvt.userChoice.then(() => setInstallEvt(null))
   }
 
-  const profile = JSON.parse(localStorage.getItem('dungeontap_profile') || 'null')
-  const today = new Date().toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' })
+  async function handleNotifications() {
+    if (typeof Notification === 'undefined') return
+    const permission = await Notification.requestPermission()
+    setNotifStatus(permission)
+    if (permission === 'granted') {
+      // Show a welcome notification + schedule tomorrow's 8am reminder via SW
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.ready
+        reg.showNotification('DungeonTap 🗡️', {
+          body: 'Benachrichtigungen aktiviert! Wir erinnern dich täglich um 8 Uhr.',
+          icon: '/icons/icon-192.png',
+        })
+      }
+    }
+  }
+
+  const profile       = JSON.parse(localStorage.getItem('dungeontap_profile') || 'null')
+  const today         = new Date().toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' })
+  const dailyModifier = getDailyModifier(getDailySeed())
+  const unlocked      = loadAchievements()
+  const achieveCount  = Object.keys(unlocked).length
 
   return (
     <div className="flex flex-col items-center justify-between h-full safe-top safe-bottom px-6 py-10 bg-dungeon">
@@ -73,11 +97,21 @@ export default function Menu() {
           <span>DAILY DUNGEON</span>
           <span className="block text-xs text-gray-500 mt-0.5 font-normal pixel" style={{ fontSize: '0.55rem' }}>
             {today}
+            {dailyModifier.id !== 'none' && (
+              <> · {dailyModifier.icon} {dailyModifier.title}</>
+            )}
           </span>
         </MenuButton>
 
         <MenuButton onClick={() => navigate('/leaderboard')}>
           BESTENLISTE
+        </MenuButton>
+
+        <MenuButton onClick={() => navigate('/achievements')}>
+          <span>ERRUNGENSCHAFTEN</span>
+          <span className="block text-xs text-gray-500 mt-0.5 font-normal pixel" style={{ fontSize: '0.55rem' }}>
+            {achieveCount}/{ACHIEVEMENTS.length} FREIGESCHALTET
+          </span>
         </MenuButton>
 
         <MenuButton onClick={() => navigate('/game?mode=story')}>
@@ -89,12 +123,18 @@ export default function Menu() {
 
         {/* PWA install prompt — only shows if browser fires beforeinstallprompt */}
         {installEvt && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-          >
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
             <MenuButton onClick={handleInstall}>
               📲 AUF HOMESCREEN
+            </MenuButton>
+          </motion.div>
+        )}
+
+        {/* Notification opt-in — only show if not yet decided */}
+        {notifStatus === 'default' && (
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+            <MenuButton onClick={handleNotifications}>
+              🔔 TAGES-ERINNERUNG
             </MenuButton>
           </motion.div>
         )}
