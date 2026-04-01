@@ -8,7 +8,7 @@ import { generateDungeon, generateInfiniteDungeon, getRoomAtFloor, getDailySeed,
 import { checkAndUnlockAchievements, ACHIEVEMENTS, loadAchievements } from '../game/achievements'
 import { createCombatState, applyPlayerAction, applyBlock, applyDodge, resolveEnemyAttack, ATTACK_LABELS } from '../game/combat'
 import { attachSwipeListener } from '../game/swipe'
-import { sfx } from '../game/sound'
+import { sfx, unlockAudio } from '../game/sound'
 import MonsterSprite from '../components/MonsterSprite'
 import RoomTile from '../components/RoomTile'
 
@@ -1090,6 +1090,7 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
 
   function handleSpecial() {
     if (!specialReady) return
+    unlockAudio()
     const perfect = Math.abs(cursorRef.current - 50) <= SWEET_SPOT
     sfx.special()
     onSpecial(perfect ? 2.0 : 1.0)
@@ -1185,9 +1186,10 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
         </AnimatePresence>
       </div>
 
-      {/* Swipe zone */}
+      {/* Swipe zone — onPointerDown is still inside the real DOM event (unlocks Web Audio) */}
       <div
         ref={swipeZoneRef}
+        onPointerDown={unlockAudio}
         className="flex-1 flex flex-col items-center justify-center cursor-pointer touch-none relative"
       >
         {/* Floating numbers for player damage */}

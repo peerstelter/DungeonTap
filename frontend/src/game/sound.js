@@ -10,9 +10,26 @@ function vibe(pattern) {
 
 let _ctx = null
 
+// Must be called from a direct DOM event handler (click / pointerdown / touchstart).
+// Creates the AudioContext and plays a 1-sample silent buffer — the only reliable
+// way to unlock Web Audio on Chrome, Firefox and Safari desktop + mobile.
+export function unlockAudio() {
+  if (_ctx && _ctx.state === 'running') return
+  if (!_ctx) _ctx = new AudioContext()
+  _ctx.resume().then(() => {
+    // Silent 1-sample buffer — "tricks" browsers that need an actual source node
+    const buf = _ctx.createBuffer(1, 1, _ctx.sampleRate)
+    const src = _ctx.createBufferSource()
+    src.buffer = buf
+    src.connect(_ctx.destination)
+    src.start(0)
+  }).catch(() => {})
+}
+
 function ctx() {
   if (!_ctx) _ctx = new AudioContext()
-  if (_ctx.state === 'suspended') _ctx.resume()
+  // resume() is a no-op if already running; non-awaited is fine after unlock
+  if (_ctx.state === 'suspended') _ctx.resume().catch(() => {})
   return _ctx
 }
 
