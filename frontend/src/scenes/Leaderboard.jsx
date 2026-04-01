@@ -24,6 +24,15 @@ export default function Leaderboard() {
 
   const todayLabel = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })
 
+  function getISOWeek() {
+    const date = new Date()
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+    d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7))
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+    return Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
+  }
+  const weekLabel = `KW${getISOWeek()}`
+
   const load = useCallback(() => {
     setLoading(true)
     setOffline(false)
@@ -73,6 +82,7 @@ export default function Leaderboard() {
         {[
           { id: 'global', label: 'GLOBAL' },
           { id: 'daily',  label: `DAILY · ${todayLabel}` },
+          { id: 'weekly', label: `WOCHE · ${weekLabel}` },
         ].map(t => (
           <button
             key={t.id}
@@ -110,7 +120,9 @@ export default function Leaderboard() {
           <div className="pixel text-gray-600 text-xs leading-relaxed">
             {tab === 'daily'
               ? 'Noch keine Runs heute.\nSei der Erste!'
-              : 'Noch keine Einträge.'}
+              : tab === 'weekly'
+                ? `Noch keine Runs diese Woche (${weekLabel}).\nSei der Erste!`
+                : 'Noch keine Einträge.'}
           </div>
           <button
             onClick={() => navigate('/class-select')}

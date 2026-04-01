@@ -61,6 +61,11 @@ function migrate(db) {
   }
   addColumn('kills', 'INTEGER NOT NULL DEFAULT 0')
   addColumn('level', 'INTEGER NOT NULL DEFAULT 1')
+  addColumn('week',  'TEXT')
+
+  try {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_runs_week ON runs (week, score DESC)')
+  } catch {}
 }
 
 module.exports = { getDb }

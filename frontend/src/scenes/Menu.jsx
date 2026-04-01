@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { version } from '../../package.json'
 import { loadStoryProgress } from '../game/story'
-import { getDailyModifier, getDailySeed } from '../game/dungeon'
+import { getDailyModifier, getDailySeed, getDailyChallenge } from '../game/dungeon'
 import { loadAchievements, ACHIEVEMENTS } from '../game/achievements'
 import { getPrestigePoints } from '../game/prestige'
 
@@ -57,9 +57,20 @@ export default function Menu() {
   const profile        = JSON.parse(localStorage.getItem('dungeontap_profile') || 'null')
   const today          = new Date().toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' })
   const dailyModifier  = getDailyModifier(getDailySeed())
+  const dailyChallenge = getDailyChallenge()
   const unlocked       = loadAchievements()
   const achieveCount   = Object.keys(unlocked).length
   const prestigePoints = getPrestigePoints()
+
+  function handleChallenge() {
+    // warrior_only forces class — skip class select
+    if (dailyChallenge.forcedClass) {
+      sessionStorage.setItem('playerClass', dailyChallenge.forcedClass)
+      navigate('/game?mode=challenge')
+    } else {
+      navigate('/class-select?mode=challenge')
+    }
+  }
 
   return (
     <div className="flex flex-col items-center justify-between h-full safe-top safe-bottom px-6 py-10 bg-dungeon">
@@ -109,10 +120,10 @@ export default function Menu() {
           BESTENLISTE
         </MenuButton>
 
-        <MenuButton onClick={() => navigate('/achievements')}>
-          <span>ERRUNGENSCHAFTEN</span>
+        <MenuButton onClick={handleChallenge}>
+          <span>{dailyChallenge.icon} TAGES-CHALLENGE</span>
           <span className="block text-xs text-gray-500 mt-0.5 font-normal pixel" style={{ fontSize: '0.55rem' }}>
-            {achieveCount}/{ACHIEVEMENTS.length} FREIGESCHALTET
+            {dailyChallenge.title.toUpperCase()} — {dailyChallenge.desc}
           </span>
         </MenuButton>
 
@@ -129,6 +140,20 @@ export default function Menu() {
             ⭐ {prestigePoints} PUNKTE VERFÜGBAR
           </span>
         </MenuButton>
+
+        {/* Secondary row: smaller buttons */}
+        <div className="flex gap-2">
+          <SecondaryButton onClick={() => navigate('/achievements')}>
+            🏅 {achieveCount}/{ACHIEVEMENTS.length}
+            <span className="block pixel" style={{ fontSize: '0.45rem' }}>ERRUNGENSCH.</span>
+          </SecondaryButton>
+          <SecondaryButton onClick={() => navigate('/stats')}>
+            📊 STATISTIKEN
+          </SecondaryButton>
+          <SecondaryButton onClick={() => navigate('/settings')}>
+            ⚙️ SETTINGS
+          </SecondaryButton>
+        </div>
 
         {/* PWA install prompt — only shows if browser fires beforeinstallprompt */}
         {installEvt && (
@@ -158,6 +183,17 @@ export default function Menu() {
         <p className="text-gray-700 text-xs pixel">v{version}</p>
       </div>
     </div>
+  )
+}
+
+function SecondaryButton({ children, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex-1 py-3 pixel text-xs text-gray-500 border border-gray-800 hover:border-gray-600 hover:text-gray-400 transition-all active:scale-95 text-center leading-tight"
+    >
+      {children}
+    </button>
   )
 }
 

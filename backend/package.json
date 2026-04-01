@@ -1,6 +1,6 @@
 {
   "name": "dungeontap-backend",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "type": "commonjs",
   "scripts": {
     "start": "node index.js",

@@ -7,6 +7,8 @@ import Leaderboard from './scenes/Leaderboard'
 import Profile from './scenes/Profile'
 import Achievements from './scenes/Achievements'
 import Prestige from './scenes/Prestige'
+import Settings from './scenes/Settings'
+import Stats from './scenes/Stats'
 
 // Redirect to /profile if player hasn't set up a name+PIN yet
 function RequireProfile({ children }) {
@@ -45,6 +47,8 @@ export default function App() {
           <Route path="/game"        element={<RequireProfile><Game /></RequireProfile>} />
           <Route path="/achievements" element={<Achievements />} />
           <Route path="/prestige"     element={<Prestige />} />
+          <Route path="/settings"     element={<Settings />} />
+          <Route path="/stats"        element={<Stats />} />
           <Route path="*"            element={<Navigate to="/" replace />} />
         </Routes>
       </div>

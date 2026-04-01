@@ -1,11 +1,13 @@
 // Web Audio API synthesizer — no audio files, all procedural
 // Haptic feedback runs alongside every sfx call via navigator.vibrate()
+import { isSoundEnabled, isVibrationEnabled } from './settings.js'
 
 // iOS Safari has never implemented the Web Vibration API — navigator.vibrate
 // is undefined there. This is not a permissions issue; Apple simply chose not
 // to ship it. The check below silently no-ops on iOS and desktop browsers that
 // don't support vibration, so no errors are thrown.
 function vibe(pattern) {
+  if (!isVibrationEnabled()) return
   if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
     navigator.vibrate(pattern)
   }
@@ -43,6 +45,7 @@ function ctx() {
 }
 
 function tone({ freq = 440, freqEnd = null, type = 'square', dur = 0.12, vol = 0.3, delay = 0 }) {
+  if (!isSoundEnabled()) return
   const c = ctx()
   const t = c.currentTime + delay
   const osc = c.createOscillator()
@@ -59,6 +62,7 @@ function tone({ freq = 440, freqEnd = null, type = 'square', dur = 0.12, vol = 0
 }
 
 function noise({ dur = 0.1, vol = 0.3, delay = 0, cutoff = 1000 }) {
+  if (!isSoundEnabled()) return
   const c = ctx()
   const t = c.currentTime + delay
   const buffer = c.createBuffer(1, c.sampleRate * dur, c.sampleRate)

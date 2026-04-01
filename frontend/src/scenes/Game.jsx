@@ -4,9 +4,10 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { CLASSES } from '../game/classes'
 import { STORY, saveStoryProgress } from '../game/story'
 import { getMonsterForFloor, getEliteMonsterForFloor, getMidBossForFloor } from '../game/monsters'
-import { generateDungeon, generateBranchingDungeon, generateInfiniteDungeon, getRoomAtFloor, getDailySeed, getDailyModifier, ROOM_TYPES, getBiome, BIOMES } from '../game/dungeon'
+import { generateDungeon, generateBranchingDungeon, generateInfiniteDungeon, getRoomAtFloor, getDailySeed, getDailyModifier, getDailyChallenge, ROOM_TYPES, getBiome, BIOMES } from '../game/dungeon'
 import { checkAndUnlockAchievements, ACHIEVEMENTS, loadAchievements } from '../game/achievements'
 import { applyPrestigeBonuses, earnPrestigePoints, addPrestigePoints } from '../game/prestige'
+import { updateStats } from '../game/stats'
 import { createCombatState, applyPlayerAction, applyBlock, applyDodge, resolveEnemyAttack, ATTACK_LABELS } from '../game/combat'
 import { attachSwipeListener } from '../game/swipe'
 import { sfx, unlockAudio } from '../game/sound'
@@ -167,7 +168,7 @@ export function loadRunHistory() {
 
 // ─── Init & State ─────────────────────────────────────────────────────────────
 
-function initRun(playerClass, seed, savedHero = null, isInfinite = false, isStory = false, modifier = null, isBranching = false) {
+function initRun(playerClass, seed, savedHero = null, isInfinite = false, isStory = false, modifier = null, isBranching = false, challenge = null) {
   const cls = CLASSES[playerClass]
 
   // Branching mode uses an empty room list — rooms added dynamically as player picks nodes
@@ -228,6 +229,7 @@ function initRun(playerClass, seed, savedHero = null, isInfinite = false, isStor
     combat: null, floorIndex: 0, pendingPerkIds: null,
     modifier: modifier ?? { id: 'none' },
     branchingMap,
+    challenge: challenge ?? null,
     _afterLevelUp: null,
     // Story-specific
     storyAct: 1,
@@ -274,7 +276,11 @@ function resolveStoryContinue(state) {
 function reducer(state, action) {
   switch (action.type) {
     case 'ENTER_ROOM': {
-      const room = state.dungeon.rooms[state.floorIndex]
+      const rawRoom = state.dungeon.rooms[state.floorIndex]
+      // noShop challenge: close all shops → become combat rooms
+      const room = (state.challenge?.noShop && rawRoom?.type === 'shop')
+        ? { ...rawRoom, type: 'combat' }
+        : rawRoom
       const mod = state.modifier ?? {}
       // Apply monster ATK modifier if active
       function scaledMonster(m) {
@@ -655,11 +661,18 @@ export default function Game() {
   }, [])
 
   const [params] = useSearchParams()
-  const mode        = params.get('mode')       // 'daily' | 'story' | 'custom' | null
+  const mode        = params.get('mode')       // 'daily' | 'story' | 'custom' | 'challenge' | null
   const urlSeed     = params.get('seed')        // set for shared custom runs
   const urlClass    = params.get('class')       // set for shared custom runs
   const isDaily     = mode === 'daily'
-  const playerClass = urlClass || sessionStorage.getItem('playerClass') || 'warrior'
+  const isChallenge = mode === 'challenge'
+
+  // Challenge may force a class; otherwise use sessionStorage / URL
+  const dailyChallenge = isChallenge ? getDailyChallenge() : null
+  const playerClass    = dailyChallenge?.forcedClass
+    || urlClass
+    || sessionStorage.getItem('playerClass')
+    || 'warrior'
 
   const [ready, setReady]         = useState(false)
   const [seed, setSeed]           = useState(null)
@@ -671,9 +684,9 @@ export default function Game() {
       // 1. Resolve seed
       let resolvedSeed
       if (urlSeed) {
-        // Shared custom run — use seed from URL directly
         resolvedSeed = parseInt(urlSeed, 10) || Math.floor(Math.random() * 0xFFFFFF)
-      } else if (isDaily) {
+      } else if (isDaily || isChallenge) {
+        // Both daily and challenge use the same shared daily seed
         try {
           const r = await fetch('/api/daily-dungeon/seed')
           const d = await r.json()
@@ -686,12 +699,12 @@ export default function Game() {
       }
       setSeed(resolvedSeed)
 
-      // 2. Daily modifier (derived from seed)
+      // 2. Daily modifier (derived from seed, daily only)
       if (isDaily) {
         setModifier(getDailyModifier(resolvedSeed))
       }
 
-      // 3. Load daily hero (backend first, localStorage fallback)
+      // 3. Load daily hero (daily only — challenge always starts fresh)
       if (isDaily) {
         const hero = await loadDailyHeroAsync()
         setSavedHero(hero)
@@ -710,18 +723,39 @@ export default function Game() {
     )
   }
 
-  // Branching map: only for fresh normal runs (not daily, not story, not shared custom seeds)
-  const isBranching = !isDaily && mode !== 'story' && !urlSeed
+  // Branching map: only for fresh normal runs (not daily, not story, not challenge, not shared URL)
+  const isBranching = !isDaily && !isChallenge && mode !== 'story' && !urlSeed
 
-  return <GameInner playerClass={playerClass} seed={seed} isDaily={isDaily} savedHero={savedHero} modifier={modifier} isBranching={isBranching} />
+  return (
+    <GameInner
+      playerClass={playerClass}
+      seed={seed}
+      isDaily={isDaily}
+      savedHero={savedHero}
+      modifier={modifier}
+      isBranching={isBranching}
+      challenge={dailyChallenge}
+    />
+  )
 }
 
-function GameInner({ playerClass, seed, isDaily, savedHero, modifier, isBranching }) {
+function GameInner({ playerClass, seed, isDaily, savedHero, modifier, isBranching, challenge }) {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const isStory  = params.get('mode') === 'story'
   const isReturningDaily = isDaily && savedHero !== null
-  const [state, dispatch] = useReducer(reducer, null, () => initRun(playerClass, seed, savedHero, isDaily && !isStory, isStory, modifier, isBranching && !isStory))
+  const [state, dispatch] = useReducer(reducer, null, () => initRun(playerClass, seed, savedHero, isDaily && !isStory, isStory, modifier, isBranching && !isStory, challenge))
+
+  // Speedrun timer
+  const runStartRef = useRef(Date.now())
+  const [elapsedSec, setElapsedSec] = useState(0)
+  useEffect(() => {
+    if (!challenge?.speedrun) return
+    const id = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - runStartRef.current) / 1000))
+    }, 1000)
+    return () => clearInterval(id)
+  }, [challenge?.speedrun]) // eslint-disable-line
 
   // Newly unlocked achievements to show on RunEnd
   const [newAchievements, setNewAchievements] = useState([])
@@ -741,6 +775,7 @@ function GameInner({ playerClass, seed, isDaily, savedHero, modifier, isBranchin
       if (isDaily && !isStory) saveDailyHeroAsync(state.player)
       const won = state.phase === 'victory_run' || state.phase === 'story_complete'
       saveRunToHistory(state.player, won)
+      updateStats(state.player, won)
       const newly = checkAndUnlockAchievements(state.player, won, isDaily)
       if (newly.length > 0) setNewAchievements(newly)
       const pts = earnPrestigePoints(state.player, won)
@@ -898,6 +933,7 @@ function GameInner({ playerClass, seed, isDaily, savedHero, modifier, isBranchin
         dying={state.phase === 'monster_dying'}
         onDeathDone={() => dispatch({ type: 'CONFIRM_KILL' })}
         onSpecial={(timingBonus) => dispatch({ type: 'PLAYER_ACTION', action: 'special', timingBonus })}
+        speedrunSec={state.challenge?.speedrun ? elapsedSec : null}
       />
     )
   }
@@ -936,6 +972,7 @@ function GameInner({ playerClass, seed, isDaily, savedHero, modifier, isBranchin
   if (state.phase === 'trap') {
     return <TrapScreen state={state} onNext={() => dispatch({ type: 'LEAVE_ROOM' })} />
   }
+  const isChallenge = !!state.challenge
   if (state.phase === 'game_over') {
     return (
       <RunEnd
@@ -944,7 +981,8 @@ function GameInner({ playerClass, seed, isDaily, savedHero, modifier, isBranchin
         isDaily={isDaily}
         newAchievements={newAchievements}
         prestigePointsEarned={prestigePointsEarned}
-        onRetry={() => isDaily ? navigate('/game?mode=daily') : navigate('/class-select')}
+        elapsedSec={elapsedSec}
+        onRetry={state.challenge?.permadeath ? null : () => isDaily ? navigate('/game?mode=daily') : isChallenge ? navigate('/game?mode=challenge') : navigate('/class-select')}
         onLeaderboard={() => navigate('/leaderboard')}
         onPrestige={() => navigate('/prestige')}
         onMenu={() => navigate('/')}
@@ -959,7 +997,8 @@ function GameInner({ playerClass, seed, isDaily, savedHero, modifier, isBranchin
         isDaily={isDaily}
         newAchievements={newAchievements}
         prestigePointsEarned={prestigePointsEarned}
-        onRetry={() => isDaily ? navigate('/game?mode=daily') : navigate('/class-select')}
+        elapsedSec={elapsedSec}
+        onRetry={state.challenge?.permadeath ? null : () => isDaily ? navigate('/game?mode=daily') : isChallenge ? navigate('/game?mode=challenge') : navigate('/class-select')}
         onLeaderboard={() => navigate('/leaderboard')}
         onPrestige={() => navigate('/prestige')}
         onMenu={() => navigate('/')}
@@ -1016,6 +1055,18 @@ function DungeonMap({ state, onEnter, onQuit, isReturningDaily, isStory }) {
           style={{ fontSize: '0.5rem' }}
         >
           {state.modifier.icon} {state.modifier.title.toUpperCase()} — {state.modifier.desc}
+        </motion.div>
+      )}
+
+      {/* Challenge banner */}
+      {state.challenge && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mt-2 px-3 py-1.5 border border-red-900 bg-red-950/30 text-red-400 text-xs text-center pixel"
+          style={{ fontSize: '0.5rem' }}
+        >
+          {state.challenge.icon} CHALLENGE: {state.challenge.title.toUpperCase()} — {state.challenge.desc}
         </motion.div>
       )}
 
@@ -1099,7 +1150,7 @@ function DungeonMap({ state, onEnter, onQuit, isReturningDaily, isStory }) {
 
 const SWEET_SPOT = 18
 
-function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDone }) {
+function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDone, speedrunSec = null }) {
   const { combat, player } = state
   const { monster, phase, pendingEnemyMove, specialBar } = combat
   const atk = pendingEnemyMove ? ATTACK_LABELS[pendingEnemyMove] : null
@@ -1349,6 +1400,11 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
 
       {/* Player HUD */}
       <div className="px-4 pb-6 safe-bottom flex flex-col gap-3">
+        {speedrunSec !== null && (
+          <div className="text-center pixel text-amber-400" style={{ fontSize: '0.55rem' }}>
+            ⏱️ {Math.floor(speedrunSec/60)}:{String(speedrunSec%60).padStart(2,'0')}
+          </div>
+        )}
         <HpBar hp={combat.player.hp} maxHp={combat.player.maxHp} />
         {/* Active status effects */}
         {(combat.statusEffects?.length > 0 || combat.monsterStatus?.length > 0) && (
@@ -1833,7 +1889,7 @@ function TrapScreen({ state, onNext }) {
 
 // ─── Run End (Game Over + Victory) ───────────────────────────────────────────
 
-function RunEnd({ state, won, isDaily, newAchievements = [], prestigePointsEarned = 0, onRetry, onLeaderboard, onPrestige, onMenu }) {
+function RunEnd({ state, won, isDaily, newAchievements = [], prestigePointsEarned = 0, elapsedSec = 0, onRetry, onLeaderboard, onPrestige, onMenu }) {
   const { player, dungeon } = state
   const profile = JSON.parse(localStorage.getItem('dungeontap_profile') || 'null')
 
@@ -1912,6 +1968,13 @@ function RunEnd({ state, won, isDaily, newAchievements = [], prestigePointsEarne
         {won ? '🏅 DUNGEON BEZWUNGEN!' : '💀 TOD'}
       </motion.div>
 
+      {/* Challenge banner */}
+      {state.challenge && (
+        <div className="pixel text-xs text-red-400 border border-red-900 px-3 py-1 w-full max-w-xs text-center" style={{ fontSize: '0.5rem' }}>
+          {state.challenge.icon} {state.challenge.title.toUpperCase()} CHALLENGE
+        </div>
+      )}
+
       {/* Stats grid */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
@@ -1924,6 +1987,9 @@ function RunEnd({ state, won, isDaily, newAchievements = [], prestigePointsEarne
           { icon: '⚔️', label: 'Kills',  value: player.kills },
           { icon: '⭐', label: 'XP',     value: player.xp   },
           { icon: '💰', label: 'Gold',   value: player.gold  },
+          ...(state.challenge?.speedrun && elapsedSec > 0
+            ? [{ icon: '⏱️', label: 'Zeit', value: `${Math.floor(elapsedSec/60)}:${String(elapsedSec%60).padStart(2,'0')}` }]
+            : []),
         ].map(s => (
           <div key={s.label} className="border border-dungeon-border bg-dungeon-dark p-3 text-center">
             <div className="text-lg">{s.icon}</div>
@@ -2064,12 +2130,21 @@ function RunEnd({ state, won, isDaily, newAchievements = [], prestigePointsEarne
               ) : '🔗 RUN TEILEN'}
             </button>
           )}
-          <button onClick={onRetry} className="py-4 pixel text-xs border border-dungeon-border text-gray-400 active:scale-95">
-            {isDaily ? 'NOCHMAL (HELD BLEIBT)' : 'NOCHMAL'}
-          </button>
-          {isDaily && !won && (
-            <div className="text-purple-500 text-xs text-center leading-relaxed">
-              Dein LV{player.level}-Held bleibt bis Mitternacht.
+          {onRetry && (
+            <>
+              <button onClick={onRetry} className="py-4 pixel text-xs border border-dungeon-border text-gray-400 active:scale-95">
+                {isDaily ? 'NOCHMAL (HELD BLEIBT)' : 'NOCHMAL'}
+              </button>
+              {isDaily && !won && (
+                <div className="text-purple-500 text-xs text-center leading-relaxed">
+                  Dein LV{player.level}-Held bleibt bis Mitternacht.
+                </div>
+              )}
+            </>
+          )}
+          {state.challenge?.permadeath && !won && (
+            <div className="text-red-700 text-xs text-center leading-relaxed pixel" style={{ fontSize: '0.5rem' }}>
+              ☠ PERMADEATH — kein Retry
             </div>
           )}
           <button onClick={onMenu} className="py-4 pixel text-xs text-gray-600 active:scale-95">

@@ -5,10 +5,19 @@ const { hashPin } = require('./users')
 const router = express.Router()
 const MAX_ENTRIES = 50
 
-// GET /api/leaderboard?type=global|daily
+// Returns ISO week string like "2026-W14"
+function getISOWeek(date = new Date()) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7))
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
+  return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`
+}
+
+// GET /api/leaderboard?type=global|daily|weekly
 router.get('/', (req, res) => {
   const db   = getDb()
-  const type = req.query.type === 'daily' ? 'daily' : 'global'
+  const type = req.query.type
 
   let rows
   if (type === 'daily') {
@@ -20,6 +29,15 @@ router.get('/', (req, res) => {
       ORDER BY score DESC
       LIMIT ?
     `).all(today, MAX_ENTRIES)
+  } else if (type === 'weekly') {
+    const week = getISOWeek()
+    rows = db.prepare(`
+      SELECT id, name, class, floor, xp, gold, kills, level, score, created_at
+      FROM runs
+      WHERE week = ?
+      ORDER BY score DESC
+      LIMIT ?
+    `).all(week, MAX_ENTRIES)
   } else {
     rows = db.prepare(`
       SELECT id, name, class, floor, xp, gold, kills, level, score, created_at
@@ -71,10 +89,11 @@ router.post('/', (req, res) => {
 
   const score = calcScore(floor, xp, gold, kills)
   const today = new Date().toISOString().slice(0, 10)
+  const week  = getISOWeek()
 
   const result = db.prepare(`
-    INSERT INTO runs (name, class, floor, xp, gold, kills, level, score, seed, is_daily, daily_date)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO runs (name, class, floor, xp, gold, kills, level, score, seed, is_daily, daily_date, week)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     playerName, cls,
     Math.floor(floor), Math.floor(xp ?? 0), Math.floor(gold ?? 0),
@@ -83,6 +102,7 @@ router.post('/', (req, res) => {
     seed ?? null,
     isDaily ? 1 : 0,
     isDaily ? today : null,
+    week,
   )
 
   res.status(201).json({ id: result.lastInsertRowid, score })

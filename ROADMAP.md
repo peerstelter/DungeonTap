@@ -102,21 +102,22 @@
 
 ### ⚙️ Qualität & Social — Priorität 3
 
-- [ ] **Einstellungen-Screen**
-  Sound an/aus, Vibration an/aus (Android), Sprache (DE/EN).
-  Erreichbar über Hauptmenü.
+- [x] **Einstellungen-Screen**
+  Sound an/aus, Vibration an/aus (Android). Erreichbar über Hauptmenü.
+  (Sprache DE/EN bleibt offen)
 
-- [ ] **Statistiken-Screen**
+- [x] **Statistiken-Screen**
   Gesamt-Kills, meistgespielte Klasse, längster Run, meiste Etagen erreicht,
-  Gesamt-Gold gesammelt, Anzahl Tode. Alles in localStorage.
+  Gesamt-Gold, Anzahl Tode, Siegesrate, Klassen-Verteilung. localStorage.
 
-- [ ] **Wöchentliche Bestenliste**
-  Separate Tabelle im Leaderboard — resettet montags.
-  Backend: Spalte `week` in scores-Tabelle.
+- [x] **Wöchentliche Bestenliste**
+  Dritter Tab im Leaderboard. Backend: `week TEXT` Spalte + Index.
+  `getISOWeek()` berechnet KW deterministisch.
 
-- [ ] **Challenge-Runs**
-  Tägliche Sonder-Regeln die über den Daily Modifier hinausgehen:
-  "Nur Krieger erlaubt", "Kein Shop", "Permadeath ohne Retry", "Speedrun (Zeit zählt)".
+- [x] **Challenge-Runs**
+  4 Typen rotieren täglich: Krieger-Tag (forcedClass), Kein Händler (noShop),
+  Permadeath (kein Retry), Speedrun (Timer im HUD + RunEnd).
+  Eigener Einstiegspunkt im Hauptmenü.
 
 ---
 

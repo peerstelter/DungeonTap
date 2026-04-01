@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { CLASSES } from '../game/classes'
 
@@ -82,12 +82,14 @@ const CLASS_ICONS = {
 
 export default function ClassSelect() {
   const [selected, setSelected] = useState(null)
-  const navigate = useNavigate()
+  const navigate    = useNavigate()
+  const [params]    = useSearchParams()
+  const forwardMode = params.get('mode') // e.g. 'challenge'
 
   function startGame() {
     if (!selected) return
     sessionStorage.setItem('playerClass', selected)
-    navigate('/game')
+    navigate(forwardMode ? `/game?mode=${forwardMode}` : '/game')
   }
 
   return (

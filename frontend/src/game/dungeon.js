@@ -187,7 +187,49 @@ export function getDailyModifier(seed) {
   return DAILY_MODIFIERS[seed % DAILY_MODIFIERS.length]
 }
 
-// Biome theming based on floor depth
+// ─── Daily Challenge Runs ─────────────────────────────────────────────────────
+// One challenge type per day, cycling every 4 days.
+
+export const CHALLENGES = [
+  {
+    id: 'warrior_only',
+    icon: '⚔️',
+    title: 'Krieger-Tag',
+    desc: 'Nur Krieger spielbar',
+    forcedClass: 'warrior',
+  },
+  {
+    id: 'no_shop',
+    icon: '🚫',
+    title: 'Kein Händler',
+    desc: 'Shops sind geschlossen — spare dein Gold',
+    noShop: true,
+  },
+  {
+    id: 'permadeath',
+    icon: '☠️',
+    title: 'Permadeath',
+    desc: 'Kein Retry — ein Leben, ein Run',
+    permadeath: true,
+  },
+  {
+    id: 'speedrun',
+    icon: '⏱️',
+    title: 'Speedrun',
+    desc: 'Zeit wird gemessen — wie schnell bist du?',
+    speedrun: true,
+  },
+]
+
+export function getDailyChallenge() {
+  // Derive from day-of-year so it rotates daily, same for all players
+  const now   = new Date()
+  const start = new Date(now.getFullYear(), 0, 0)
+  const doy   = Math.floor((now - start) / 86400000)
+  return CHALLENGES[doy % CHALLENGES.length]
+}
+
+// ─── Biome theming based on floor depth
 export function getBiome(floor) {
   if (floor < 10)  return 'cave'
   if (floor < 20)  return 'crypt'
