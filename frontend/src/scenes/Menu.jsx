@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { version } from '../../package.json'
 
 export default function Menu() {
   const navigate  = useNavigate()
@@ -96,7 +97,7 @@ export default function Menu() {
             ✎ {profile.name}
           </button>
         )}
-        <p className="text-gray-700 text-xs pixel">v0.3.0</p>
+        <p className="text-gray-700 text-xs pixel">v{version}</p>
       </div>
     </div>
   )
