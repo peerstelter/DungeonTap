@@ -2,6 +2,7 @@ import { useState, useEffect, useReducer, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CLASSES } from '../game/classes'
+import { STORY, saveStoryProgress } from '../game/story'
 import { getMonsterForFloor, getEliteMonsterForFloor, getMidBossForFloor } from '../game/monsters'
 import { generateDungeon, generateInfiniteDungeon, getRoomAtFloor, getDailySeed, ROOM_TYPES, getBiome, BIOMES } from '../game/dungeon'
 import { createCombatState, applyPlayerAction, applyBlock, applyDodge, resolveEnemyAttack, ATTACK_LABELS } from '../game/combat'
@@ -126,9 +127,13 @@ export function loadRunHistory() {
 
 // ─── Init & State ─────────────────────────────────────────────────────────────
 
-function initRun(playerClass, seed, savedHero = null, isInfinite = false) {
+function initRun(playerClass, seed, savedHero = null, isInfinite = false, isStory = false) {
   const cls = CLASSES[playerClass]
-  const dungeon = isInfinite ? generateInfiniteDungeon(seed) : generateDungeon(seed)
+  const dungeon = isStory
+    ? { seed: null, rooms: [], storyMode: true }
+    : isInfinite
+      ? generateInfiniteDungeon(seed)
+      : generateDungeon(seed)
 
   let player
   if (savedHero) {
@@ -166,7 +171,50 @@ function initRun(playerClass, seed, savedHero = null, isInfinite = false) {
       activePerks: [],
     }
   }
-  return { dungeon, player, phase: 'dungeon_map', combat: null, floorIndex: 0, pendingPerkIds: null }
+  return {
+    dungeon, player,
+    phase: isStory ? 'act_intro' : 'dungeon_map',
+    combat: null, floorIndex: 0, pendingPerkIds: null,
+    // Story-specific
+    storyAct: 1,
+    storySegmentIndex: -1,
+    storyPendingSegIdx: null,
+  }
+}
+
+// Advances story to the next segment (or junction/victory)
+// Called after: act_intro dismissed, room completed in story mode, perk picked in story mode
+function resolveStoryContinue(state) {
+  const nextSegIdx = (state.storySegmentIndex ?? -1) + 1
+  const act = STORY.acts[(state.storyAct ?? 1) - 1]
+
+  // Act complete?
+  if (nextSegIdx >= act.segments.length) {
+    const isLastAct = state.storyAct >= STORY.acts.length
+    saveStoryProgress(state.storyAct, isLastAct)
+    return { ...state, phase: isLastAct ? 'story_complete' : 'act_victory', storySegmentIndex: nextSegIdx }
+  }
+
+  const nextSeg = act.segments[nextSegIdx]
+
+  // Junction: let player choose
+  if (nextSeg.type === 'junction') {
+    return { ...state, phase: 'story_junction', storySegmentIndex: nextSegIdx }
+  }
+
+  // Fixed room: add to dungeon and show map
+  const nextFloor = (act.startFloor ?? 1) + nextSegIdx
+  const newRoom = { ...nextSeg.room, floor: nextFloor, cleared: false }
+  const newDungeon = { ...state.dungeon, rooms: [...state.dungeon.rooms, newRoom] }
+  const newFloorIndex = newDungeon.rooms.length - 1
+  return {
+    ...state,
+    dungeon: newDungeon,
+    floorIndex: newFloorIndex,
+    phase: 'story_map',
+    storySegmentIndex: nextSegIdx,
+    player: { ...state.player, floor: nextFloor },
+  }
 }
 
 function reducer(state, action) {
@@ -184,7 +232,9 @@ function reducer(state, action) {
         return { ...state, phase: 'combat', combat }
       }
       if (room.type === 'mid_boss') {
-        const monster = getMidBossForFloor(state.player.floor)
+        const monster = room.bossId
+          ? getMidBossForFloor(state.player.floor, room.bossId)
+          : getMidBossForFloor(state.player.floor)
         const combat = createCombatState(state.player, monster)
         return { ...state, phase: 'boss_intro', combat, isMidBoss: true }
       }
@@ -278,20 +328,34 @@ function reducer(state, action) {
     }
 
     case 'DISMISS_LEVEL_UP': {
-      // Fallback safety — pick first available perk automatically
       const perkId = state.pendingPerkIds?.[0]
+      let player = state.player
       if (perkId) {
         const perk = PERKS.find(p => p.id === perkId)
-        const player = { ...perk.apply(state.player), activePerks: [...(state.player.activePerks ?? []), perkId] }
-        return { ...state, phase: 'dungeon_map', pendingPerkIds: null, player }
+        player = { ...perk.apply(state.player), activePerks: [...(state.player.activePerks ?? []), perkId] }
       }
-      return { ...state, phase: 'dungeon_map', pendingPerkIds: null }
+      if (state.dungeon?.storyMode && state.storyPendingSegIdx != null) {
+        return resolveStoryContinue({
+          ...state, player, pendingPerkIds: null,
+          storySegmentIndex: state.storyPendingSegIdx - 1,
+          storyPendingSegIdx: null,
+        })
+      }
+      return { ...state, phase: 'dungeon_map', pendingPerkIds: null, player }
     }
 
     case 'PICK_PERK': {
       const perk = PERKS.find(p => p.id === action.perkId)
       if (!perk || !state.pendingPerkIds?.includes(action.perkId)) return state
       const player = { ...perk.apply(state.player), activePerks: [...(state.player.activePerks ?? []), action.perkId] }
+      // Story mode: resume story after perk selection
+      if (state.dungeon?.storyMode && state.storyPendingSegIdx != null) {
+        return resolveStoryContinue({
+          ...state, player, pendingPerkIds: null,
+          storySegmentIndex: state.storyPendingSegIdx - 1,
+          storyPendingSegIdx: null,
+        })
+      }
       return { ...state, phase: 'dungeon_map', pendingPerkIds: null, player }
     }
 
@@ -309,6 +373,29 @@ function reducer(state, action) {
 
     case 'LEAVE_ROOM': {
       return advanceFloor(state)
+    }
+
+    case 'DISMISS_ACT_INTRO': {
+      return resolveStoryContinue(state)
+    }
+
+    case 'STORY_CHOOSE_PATH': {
+      const act = STORY.acts[(state.storyAct ?? 1) - 1]
+      const segment = act.segments[state.storySegmentIndex]
+      const chosen = segment.options.find(o => o.roomType === action.roomType)
+      const floor = (act.startFloor ?? 1) + state.storySegmentIndex
+      const newRoom = { type: action.roomType, label: chosen?.label, floor, cleared: false }
+      const dungeon = { ...state.dungeon, rooms: [...state.dungeon.rooms, newRoom] }
+      const floorIndex = dungeon.rooms.length - 1
+      return { ...state, dungeon, floorIndex, phase: 'story_map', player: { ...state.player, floor } }
+    }
+
+    case 'NEXT_ACT': {
+      const nextAct = (state.storyAct ?? 1) + 1
+      if (nextAct > STORY.acts.length) {
+        return { ...state, phase: 'story_complete' }
+      }
+      return { ...state, storyAct: nextAct, storySegmentIndex: -1, phase: 'act_intro' }
     }
 
     default:
@@ -382,12 +469,26 @@ function checkLevelUp(player) {
 }
 
 function advanceFloor(state) {
+  // Story mode: delegate to story segment advancement
+  if (state.dungeon?.storyMode) {
+    const dungeon = markCleared(state.dungeon, state.floorIndex)
+    const basePlayer = { ...state.player }
+    const { player, didLevel } = checkLevelUp(basePlayer)
+    if (didLevel) {
+      const pendingPerkIds = rollPerks(3, player.activePerks ?? [])
+      const nextSegIdx = (state.storySegmentIndex ?? -1) + 1
+      return { ...state, dungeon, phase: 'level_up', player, pendingPerkIds, storyPendingSegIdx: nextSegIdx }
+    }
+    return resolveStoryContinue({ ...state, dungeon })
+  }
+
+  // Normal / infinite mode
   const nextIndex = state.floorIndex + 1
+  let dungeon = markCleared(state.dungeon, state.floorIndex)
 
   // Infinite daily dungeon: generate next room on demand
-  let dungeon = markCleared(state.dungeon, state.floorIndex)
   if (dungeon.infinite && nextIndex >= dungeon.rooms.length) {
-    const nextFloor = nextIndex + 1 // floor numbers are 1-based
+    const nextFloor = nextIndex + 1
     const newRoom = getRoomAtFloor(dungeon.seed, nextFloor)
     dungeon = { ...dungeon, rooms: [...dungeon.rooms, newRoom] }
   }
@@ -395,6 +496,7 @@ function advanceFloor(state) {
   if (nextIndex >= dungeon.rooms.length && !dungeon.infinite) {
     return { ...state, phase: 'victory_run' }
   }
+
   const basePlayer = { ...state.player, floor: state.player.floor + 1 }
   const { player, didLevel } = checkLevelUp(basePlayer)
   if (didLevel) {
@@ -448,14 +550,16 @@ export default function Game() {
 
 function GameInner({ playerClass, seed, isDaily, savedHero }) {
   const navigate = useNavigate()
+  const [params] = useSearchParams()
+  const isStory = params.get('mode') === 'story'
   const isReturningDaily = isDaily && savedHero !== null
-  const [state, dispatch] = useReducer(reducer, null, () => initRun(playerClass, seed, savedHero, isDaily))
+  const [state, dispatch] = useReducer(reducer, null, () => initRun(playerClass, seed, savedHero, isDaily && !isStory, isStory))
 
   // Save daily hero whenever the run ends
   useEffect(() => {
-    if (state.phase === 'game_over' || state.phase === 'victory_run') {
-      if (isDaily) saveDailyHero(state.player)
-      saveRunToHistory(state.player, state.phase === 'victory_run')
+    if (state.phase === 'game_over' || state.phase === 'victory_run' || state.phase === 'story_complete') {
+      if (isDaily && !isStory) saveDailyHero(state.player)
+      saveRunToHistory(state.player, state.phase === 'victory_run' || state.phase === 'story_complete')
     }
   }, [state.phase]) // eslint-disable-line
   const swipeZoneRef = useRef(null)
@@ -513,8 +617,57 @@ function GameInner({ playerClass, seed, isDaily, savedHero }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [state.phase, state.combat?.phase, state.combat?.specialBar])
 
-  if (state.phase === 'dungeon_map') {
-    return <DungeonMap state={state} onEnter={() => dispatch({ type: 'ENTER_ROOM' })} onQuit={() => navigate('/')} isReturningDaily={isReturningDaily} />
+  if (state.phase === 'act_intro') {
+    return (
+      <ActIntroScreen
+        act={STORY.acts[(state.storyAct ?? 1) - 1]}
+        onStart={() => dispatch({ type: 'DISMISS_ACT_INTRO' })}
+        onQuit={() => navigate('/')}
+      />
+    )
+  }
+  if (state.phase === 'story_junction') {
+    const act = STORY.acts[(state.storyAct ?? 1) - 1]
+    const segment = act.segments[state.storySegmentIndex]
+    return (
+      <JunctionScreen
+        options={segment?.options ?? []}
+        player={state.player}
+        onChoose={roomType => dispatch({ type: 'STORY_CHOOSE_PATH', roomType })}
+      />
+    )
+  }
+  if (state.phase === 'act_victory') {
+    const act = STORY.acts[(state.storyAct ?? 1) - 1]
+    const isLast = state.storyAct >= STORY.acts.length
+    return (
+      <ActVictoryScreen
+        act={act}
+        isLast={isLast}
+        onNext={() => dispatch({ type: 'NEXT_ACT' })}
+        onMenu={() => navigate('/')}
+      />
+    )
+  }
+  if (state.phase === 'story_complete') {
+    return (
+      <StoryCompleteScreen
+        player={state.player}
+        onMenu={() => navigate('/')}
+        onLeaderboard={() => navigate('/leaderboard')}
+      />
+    )
+  }
+  if (state.phase === 'dungeon_map' || state.phase === 'story_map') {
+    return (
+      <DungeonMap
+        state={state}
+        onEnter={() => dispatch({ type: 'ENTER_ROOM' })}
+        onQuit={() => navigate('/')}
+        isReturningDaily={isReturningDaily}
+        isStory={state.dungeon?.storyMode}
+      />
+    )
   }
   if (state.phase === 'combat' || state.phase === 'monster_dying') {
     return (
@@ -590,7 +743,7 @@ function GameInner({ playerClass, seed, isDaily, savedHero }) {
 
 // ─── Dungeon Map ──────────────────────────────────────────────────────────────
 
-function DungeonMap({ state, onEnter, onQuit, isReturningDaily }) {
+function DungeonMap({ state, onEnter, onQuit, isReturningDaily, isStory }) {
   const { dungeon, player, floorIndex } = state
   const currentRoom = dungeon.rooms[floorIndex]
   const currentRef = useRef(null)
@@ -637,6 +790,20 @@ function DungeonMap({ state, onEnter, onQuit, isReturningDaily }) {
           ⚡ Dein Held von heute – LV{player.level} · {player.activePerks?.length ?? 0} Perks
         </motion.div>
       )}
+
+      {/* Story act banner */}
+      {isStory && (() => {
+        const act = STORY.acts[(state.storyAct ?? 1) - 1]
+        return (
+          <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-2 px-3 py-2 border border-amber-900 bg-amber-950/40 text-center"
+          >
+            <div className="pixel text-xs text-amber-400">{act?.icon} {act?.subtitle}: {act?.title}</div>
+          </motion.div>
+        )
+      })()}
 
       {/* Path */}
       <div className="flex-1 overflow-y-auto mt-5 pr-1">
@@ -1584,6 +1751,228 @@ function RunEnd({ state, won, isDaily, onRetry, onLeaderboard, onMenu }) {
           </button>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Act Intro Screen ─────────────────────────────────────────────────────────
+
+function ActIntroScreen({ act, onStart, onQuit }) {
+  const [lineIdx, setLineIdx] = useState(0)
+
+  useEffect(() => {
+    if (lineIdx < (act?.intro?.length ?? 0) - 1) {
+      const t = setTimeout(() => setLineIdx(i => i + 1), 1800)
+      return () => clearTimeout(t)
+    }
+  }, [lineIdx, act])
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-6 px-8 bg-dungeon safe-top safe-bottom">
+      <motion.div
+        initial={{ scale: 0, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ type: 'spring', stiffness: 200, damping: 14 }}
+        className="text-7xl"
+      >
+        {act?.icon}
+      </motion.div>
+
+      <div className="text-center">
+        <div className="pixel text-gray-600 text-xs tracking-widest mb-1">{act?.subtitle}</div>
+        <div className="pixel text-gold text-base">{act?.title}</div>
+      </div>
+
+      <div className="flex flex-col gap-3 w-full max-w-xs min-h-[80px]">
+        {act?.intro?.slice(0, lineIdx + 1).map((line, i) => (
+          <motion.p
+            key={i}
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="text-gray-400 text-sm text-center leading-relaxed"
+          >
+            {line}
+          </motion.p>
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-3 w-full max-w-xs">
+        <motion.button
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 1.5 }}
+          onClick={onStart}
+          whileTap={{ scale: 0.97 }}
+          className="py-4 pixel text-sm border-2 border-gold bg-dungeon-gold text-dungeon-black"
+        >
+          BEGINNE →
+        </motion.button>
+        <button onClick={onQuit} className="text-gray-700 text-xs pixel py-2">
+          HAUPTMENÜ
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Junction Screen (Path Choice) ────────────────────────────────────────────
+
+function JunctionScreen({ options, player, onChoose }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-6 px-6 bg-dungeon safe-top safe-bottom">
+      <motion.div
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="text-center"
+      >
+        <div className="text-3xl mb-2">🔀</div>
+        <div className="pixel text-gold text-sm">WÄHLE DEINEN WEG</div>
+        <div className="text-gray-600 text-xs mt-1">Deine Entscheidung ist endgültig.</div>
+      </motion.div>
+
+      <HpBar hp={player.hp} maxHp={player.maxHp} />
+
+      <div className="flex flex-col gap-4 w-full max-w-xs">
+        {options.map((opt, i) => (
+          <motion.button
+            key={opt.roomType}
+            initial={{ opacity: 0, x: i % 2 === 0 ? -24 : 24 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.1 + i * 0.12 }}
+            onClick={() => onChoose(opt.roomType)}
+            whileTap={{ scale: 0.97 }}
+            className="flex items-center gap-4 border-2 border-dungeon-border bg-dungeon-dark px-4 py-5 text-left hover:border-gold active:bg-dungeon-gray transition-all"
+          >
+            <span className="text-3xl">{opt.icon}</span>
+            <div className="flex-1">
+              <div className="pixel text-xs text-gold-light">{opt.label}</div>
+              <div className="text-gray-500 text-xs mt-1 leading-relaxed">{opt.desc}</div>
+            </div>
+            <span className="text-gray-600 text-lg">→</span>
+          </motion.button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ─── Act Victory Screen ───────────────────────────────────────────────────────
+
+function ActVictoryScreen({ act, isLast, onNext, onMenu }) {
+  useEffect(() => { sfx.victory() }, [])
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-6 px-6 bg-dungeon safe-top safe-bottom">
+      <motion.div
+        initial={{ scale: 0.3, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ type: 'spring', stiffness: 180, damping: 12 }}
+        className="text-7xl"
+      >
+        {isLast ? '🏆' : '✅'}
+      </motion.div>
+
+      <div className="pixel text-gold text-sm text-center">{act?.subtitle} ABGESCHLOSSEN</div>
+
+      <motion.p
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.4 }}
+        className="text-gray-400 text-sm text-center max-w-xs leading-relaxed"
+      >
+        {act?.victoryText}
+      </motion.p>
+
+      <div className="flex flex-col gap-3 w-full max-w-xs">
+        {!isLast && (
+          <motion.button
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.6 }}
+            onClick={onNext}
+            whileTap={{ scale: 0.97 }}
+            className="py-4 pixel text-sm border-2 border-gold bg-dungeon-gold text-dungeon-black"
+          >
+            NÄCHSTER AKT →
+          </motion.button>
+        )}
+        <button onClick={onMenu} className="py-4 pixel text-xs border border-dungeon-border text-gray-500 active:scale-95">
+          HAUPTMENÜ
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Story Complete Screen ────────────────────────────────────────────────────
+
+function StoryCompleteScreen({ player, onMenu, onLeaderboard }) {
+  useEffect(() => {
+    sfx.victory()
+    setTimeout(() => sfx.victory(), 600)
+  }, [])
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-5 px-6 bg-dungeon safe-top safe-bottom overflow-hidden">
+      <motion.div
+        className="absolute inset-0 bg-yellow-950/20 pointer-events-none"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 1.5 }}
+      />
+
+      <motion.div
+        initial={{ scale: 0, rotate: -20 }}
+        animate={{ scale: 1, rotate: 0 }}
+        transition={{ type: 'spring', stiffness: 160, damping: 10, delay: 0.2 }}
+        className="text-8xl"
+      >
+        🏆
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.5 }}
+        className="text-center"
+      >
+        <div className="pixel text-gold text-lg">GESCHICHTE ABGESCHLOSSEN</div>
+        <div className="text-gray-500 text-xs mt-2 pixel">Der Drachenlord liegt besiegt</div>
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.9 }}
+        className="grid grid-cols-2 gap-3 w-full max-w-xs"
+      >
+        {[
+          { icon: '🏰', label: 'Etage',  value: player.floor },
+          { icon: '⚔️', label: 'Kills',  value: player.kills },
+          { icon: '⭐', label: 'Level',  value: player.level },
+          { icon: '💰', label: 'Gold',   value: player.gold  },
+        ].map(s => (
+          <div key={s.label} className="border border-dungeon-border bg-dungeon-dark p-3 text-center">
+            <div className="text-lg">{s.icon}</div>
+            <div className="pixel text-gold text-sm mt-1">{s.value}</div>
+            <div className="text-gray-600 text-xs">{s.label}</div>
+          </div>
+        ))}
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 1.2 }}
+        className="flex flex-col gap-3 w-full max-w-xs"
+      >
+        <button onClick={onLeaderboard} className="py-4 pixel text-xs border-2 border-gold text-gold active:scale-95">
+          BESTENLISTE
+        </button>
+        <button onClick={onMenu} className="py-4 pixel text-xs border border-dungeon-border text-gray-400 active:scale-95">
+          HAUPTMENÜ
+        </button>
+      </motion.div>
     </div>
   )
 }

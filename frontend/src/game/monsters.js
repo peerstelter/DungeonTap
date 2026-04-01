@@ -284,9 +284,9 @@ export function getEliteMonsterForFloor(floor) {
 // Mid-boss pool: rotates by (floor / 10) index
 const MID_BOSS_POOL = ['cave_troll', 'crypt_lord', 'shadow_mage', 'infernal_knight']
 
-export function getMidBossForFloor(floor) {
+export function getMidBossForFloor(floor, bossId = null) {
   const idx = Math.floor(floor / 10) - 1
-  const id = MID_BOSS_POOL[idx % MID_BOSS_POOL.length]
+  const id = bossId ?? MID_BOSS_POOL[Math.max(0, idx) % MID_BOSS_POOL.length]
   const base = MONSTERS[id]
   const scale = Math.min(3.0, 1 + (floor - 1) * 0.06)
   const xpScale = Math.min(4.0, 1 + (floor - 1) * 0.07)

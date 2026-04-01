@@ -2,11 +2,13 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { version } from '../../package.json'
+import { loadStoryProgress } from '../game/story'
 
 export default function Menu() {
   const navigate  = useNavigate()
   const [online, setOnline]     = useState(navigator.onLine)
   const [installEvt, setInstallEvt] = useState(null)
+  const storyProgress = loadStoryProgress()
 
   // Track online/offline status
   useEffect(() => {
@@ -76,6 +78,13 @@ export default function Menu() {
 
         <MenuButton onClick={() => navigate('/leaderboard')}>
           BESTENLISTE
+        </MenuButton>
+
+        <MenuButton onClick={() => navigate('/game?mode=story')}>
+          <span>STORY MODE {storyProgress.completed ? '✓' : ''}</span>
+          <span className="block text-xs text-gray-500 mt-0.5 font-normal pixel" style={{ fontSize: '0.55rem' }}>
+            {storyProgress.completed ? 'ABGESCHLOSSEN!' : `AKT ${Math.max(1, storyProgress.highestAct + 1)} VON 3`}
+          </span>
         </MenuButton>
 
         {/* PWA install prompt — only shows if browser fires beforeinstallprompt */}
