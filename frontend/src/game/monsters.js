@@ -253,13 +253,28 @@ export const FLOOR_ENCOUNTERS = [
   { floors: [30, 99], pool: ['demon', 'lich', 'demon'] },
 ]
 
+// ─── Scaling helpers ──────────────────────────────────────────────────────────
+// Floors 1–15: +7 % per floor (same as before)
+// Floors 15+:  extra +3 % per floor — no hard cap so the daily dungeon keeps escalating
+function floorScale(floor) {
+  const base = 1 + (floor - 1) * 0.07
+  const deep = floor > 15 ? (floor - 15) * 0.03 : 0
+  return Math.min(5.0, base + deep)
+}
+// XP multiplier grows a little faster so deeper floors feel rewarding
+function floorXpScale(floor) {
+  const base = 1 + (floor - 1) * 0.08
+  const deep = floor > 15 ? (floor - 15) * 0.04 : 0
+  return Math.min(6.0, base + deep)
+}
+
 // Elite rooms: same pool as normal but ×1.5 stats + 1.5× XP/gold + rage attack injected
 export function getEliteMonsterForFloor(floor) {
   const entry = FLOOR_ENCOUNTERS.findLast(e => floor >= e.floors[0]) ?? FLOOR_ENCOUNTERS[0]
   const id = entry.pool[Math.floor(Math.random() * entry.pool.length)]
   const base = MONSTERS[id]
-  const scale = Math.min(2.0, 1 + (floor - 1) * 0.07) * 1.5  // Elite: 1.5× on top of floor scaling
-  const xpScale = Math.min(2.5, 1 + (floor - 1) * 0.08) * 1.5
+  const scale = floorScale(floor) * 1.5  // Elite: 1.5× on top of floor scaling
+  const xpScale = floorXpScale(floor) * 1.5
   // Inject rage into attack pattern if not already present
   const pattern = base.attackPattern.includes('rage')
     ? base.attackPattern
@@ -288,8 +303,8 @@ export function getMidBossForFloor(floor, bossId = null) {
   const idx = Math.floor(floor / 10) - 1
   const id = bossId ?? MID_BOSS_POOL[Math.max(0, idx) % MID_BOSS_POOL.length]
   const base = MONSTERS[id]
-  const scale = Math.min(3.0, 1 + (floor - 1) * 0.06)
-  const xpScale = Math.min(4.0, 1 + (floor - 1) * 0.07)
+  const scale = floorScale(floor) * 1.1      // Mid-boss: slightly above normal scaling
+  const xpScale = floorXpScale(floor) * 1.2
   return {
     ...base,
     hp:    Math.round(base.hp * scale),
@@ -304,25 +319,23 @@ export function getMidBossForFloor(floor, bossId = null) {
 export function getMonsterForFloor(floor, isBoss = false) {
   if (isBoss) {
     const base = MONSTERS.boss_dragon
-    const scale = Math.min(2.0, 1 + (floor - 1) * 0.07)
+    const scale = floorScale(floor)
     return {
       ...base,
       hp:    Math.round(base.hp * scale),
       maxHp: Math.round(base.hp * scale),
       atk:   Math.round(base.atk * scale),
       def:   Math.round(base.def * scale),
-      xp:    Math.round(base.xp * Math.min(2.5, 1 + (floor - 1) * 0.08)),
+      xp:    Math.round(base.xp * floorXpScale(floor)),
     }
   }
 
   const entry = FLOOR_ENCOUNTERS.findLast(e => floor >= e.floors[0]) ?? FLOOR_ENCOUNTERS[0]
-  // Weighted pick: duplicate entries in pool act as weights
   const id = entry.pool[Math.floor(Math.random() * entry.pool.length)]
   const base = MONSTERS[id]
 
-  // Gentle scaling: 7% per floor, hard cap at ×2.0
-  const scale = Math.min(2.0, 1 + (floor - 1) * 0.07)
-  const xpScale = Math.min(2.5, 1 + (floor - 1) * 0.08)
+  const scale = floorScale(floor)
+  const xpScale = floorXpScale(floor)
   return {
     ...base,
     hp:    Math.round(base.hp * scale),

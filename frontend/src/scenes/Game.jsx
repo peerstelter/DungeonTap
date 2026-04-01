@@ -164,7 +164,7 @@ function initRun(playerClass, seed, savedHero = null, isInfinite = false, isStor
       gold: 0,
       xp: 0,
       level: 1,
-      xpToNext: 100,
+      xpToNext: xpNeeded(1),
       floor: 1,
       kills: 0,
       items: [],
@@ -456,9 +456,9 @@ function applyTreasure(player, loot) {
   }
 }
 
-// XP needed per level: L2:70, L3:90, L4:110 ...
-// Expect 4–7 level-ups per full run → plenty of perk choices
-function xpNeeded(level) { return level * 20 + 50 }
+// XP needed per level — quadratic so early levels come fast, later ones require real effort:
+//   L1→2: 70   L2→3: 100  L3→4: 140  L5→6: 250  L8→9: 490  L10→11: 700
+function xpNeeded(level) { return Math.round(50 + level * 15 + level * level * 5) }
 
 function checkLevelUp(player) {
   if (player.xp < player.xpToNext) return { player, didLevel: false }
