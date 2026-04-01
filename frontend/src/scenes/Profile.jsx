@@ -46,9 +46,10 @@ export default function Profile() {
 
   const nameStatus = useNameCheck(name)
 
-  const canSave = name.trim().length >= 2 && pin.length === 4
-    && nameStatus !== 'taken'
-    && nameStatus !== 'checking'
+  // Login (taken) is also allowed — PIN is verified server-side
+  const canSave = name.trim().length >= 2
+    && pin.length === 4
+    && (nameStatus === 'available' || nameStatus === 'taken' || nameStatus === 'yours')
     && !saving
 
   async function save() {
@@ -68,12 +69,11 @@ export default function Profile() {
       const data = await res.json()
 
       if (data.error === 'name_taken') {
-        setError('Dieser Name ist bereits vergeben. Wähle einen anderen.')
-        setSaving(false)
-        return
-      }
-      if (data.error === 'wrong_pin') {
-        setError('Falscher PIN für diesen Namen.')
+        // In login mode the name was already taken → wrong PIN
+        // In register mode → name genuinely taken by someone else
+        setError(nameStatus === 'taken'
+          ? 'Falscher PIN. Bitte erneut versuchen.'
+          : 'Dieser Name ist bereits vergeben. Wähle einen anderen.')
         setSaving(false)
         return
       }
