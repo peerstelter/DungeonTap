@@ -24,6 +24,13 @@ export function unlockAudio() {
     src.connect(_ctx.destination)
     src.start(0)
   }).catch(() => {})
+
+  // Prime the Vibration API on first user gesture.
+  // Chrome Android requires vibrate() to be called once from a gesture
+  // context before subsequent calls in async code work reliably.
+  if (typeof navigator !== 'undefined' && navigator.vibrate) {
+    navigator.vibrate(1) // 1ms — imperceptible, just primes the API
+  }
 }
 
 function ctx() {

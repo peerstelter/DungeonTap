@@ -34,6 +34,29 @@
   .pixel { font-family: 'Press Start 2P', monospace; }
 }
 
+/* Portrait-only guard — shown when phone is held landscape */
+.landscape-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: #0a0a0f;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  pointer-events: none;
+}
+
+/* Only block on small landscape screens (phones).
+   Tablets and desktops in landscape are fine — leave them untouched. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .landscape-overlay {
+    display: flex;
+    pointer-events: all;
+  }
+}
+
 /* Screen shake — triggered on heavy enemy hits */
 @keyframes screen-shake {
   0%   { transform: translate(0,0) rotate(0deg); }

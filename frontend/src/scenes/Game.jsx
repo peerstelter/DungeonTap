@@ -570,6 +570,18 @@ function applyItemEffect(player, item) {
 
 // Outer shell: fetches daily seed + hero (backend → localStorage fallback) before starting
 export default function Game() {
+  // Unlock Web Audio + prime Vibration API on first interaction anywhere in the game.
+  // Must run once globally so it fires even if the player taps a menu button before
+  // reaching the swipe combat zone.
+  useEffect(() => {
+    const handler = () => {
+      unlockAudio()
+      document.removeEventListener('pointerdown', handler, true)
+    }
+    document.addEventListener('pointerdown', handler, true) // capture phase — catches everything
+    return () => document.removeEventListener('pointerdown', handler, true)
+  }, [])
+
   const [params] = useSearchParams()
   const mode        = params.get('mode')       // 'daily' | 'story' | 'custom' | null
   const urlSeed     = params.get('seed')        // set for shared custom runs
@@ -660,15 +672,30 @@ function GameInner({ playerClass, seed, isDaily, savedHero, modifier }) {
   const swipeZoneRef = useRef(null)
   const telegraphTimerRef = useRef(null)
 
-  // Auto-resolve enemy attack after telegraph window
+  // Auto-resolve enemy attack after telegraph window.
+  // Also handles PWA background/foreground: browsers throttle setTimeout when
+  // backgrounded, so we listen for visibilitychange and resolve immediately on
+  // return — prevents the game from getting stuck in enemy_telegraph forever.
   useEffect(() => {
-    if (state.phase === 'combat' && state.combat?.phase === 'enemy_telegraph') {
-      telegraphTimerRef.current = setTimeout(() => {
+    if (state.phase !== 'combat' || state.combat?.phase !== 'enemy_telegraph') return
+
+    telegraphTimerRef.current = setTimeout(() => {
+      dispatch({ type: 'RESOLVE_ENEMY' })
+    }, TELEGRAPH_MS)
+
+    function onVisible() {
+      if (document.visibilityState === 'visible') {
+        clearTimeout(telegraphTimerRef.current)
         dispatch({ type: 'RESOLVE_ENEMY' })
-      }, TELEGRAPH_MS)
+      }
     }
-    return () => clearTimeout(telegraphTimerRef.current)
-  }, [state.combat?.phase, state.combat?.pendingEnemyMove])
+    document.addEventListener('visibilitychange', onVisible)
+
+    return () => {
+      clearTimeout(telegraphTimerRef.current)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [state.combat?.phase, state.combat?.pendingEnemyMove]) // eslint-disable-line
 
   const handleSwipe = useCallback((direction) => {
     if (state.phase !== 'combat') return
@@ -1186,10 +1213,9 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
         </AnimatePresence>
       </div>
 
-      {/* Swipe zone — onPointerDown is still inside the real DOM event (unlocks Web Audio) */}
+      {/* Swipe zone */}
       <div
         ref={swipeZoneRef}
-        onPointerDown={unlockAudio}
         className="flex-1 flex flex-col items-center justify-center cursor-pointer touch-none relative"
       >
         {/* Floating numbers for player damage */}

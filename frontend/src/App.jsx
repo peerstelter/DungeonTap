@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import Menu from './scenes/Menu'
 import ClassSelect from './scenes/ClassSelect'
@@ -17,8 +18,23 @@ function RequireProfile({ children }) {
 }
 
 export default function App() {
+  // Lock orientation to portrait in PWA standalone / fullscreen mode
+  useEffect(() => {
+    if (screen.orientation?.lock) {
+      screen.orientation.lock('portrait').catch(() => {})
+    }
+  }, [])
+
   return (
     <BrowserRouter>
+      {/* Landscape guard — shown when phone is rotated sideways */}
+      <div className="landscape-overlay">
+        <div style={{ fontSize: '3rem' }}>📱</div>
+        <p className="pixel text-gold text-center" style={{ fontSize: '0.6rem', lineHeight: 2 }}>
+          BITTE GERÄT<br />DREHEN
+        </p>
+      </div>
+
       <div className="h-full bg-dungeon overflow-hidden">
         <Routes>
           <Route path="/"            element={<Menu />} />
