@@ -1290,7 +1290,7 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
       </AnimatePresence>
 
       {/* Monster area */}
-      <div className="relative flex flex-col items-center pt-8 px-4 gap-3" style={{ zIndex: 2 }}>
+      <div className="relative flex flex-col items-center pt-6 px-4 gap-2" style={{ zIndex: 2 }}>
         {dying ? (
           <motion.div
             initial={{ scale: 1, opacity: 1, y: 0, rotate: 0 }}
@@ -1303,13 +1303,13 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
             transition={{ duration: 0.75, ease: 'easeIn' }}
             onAnimationComplete={onDeathDone}
           >
-            <AnimatedSprite id={monster.id} size={96} anim="death" />
+            <AnimatedSprite id={monster.id} size={140} anim="death" />
           </motion.div>
         ) : (
-          <AnimatedSprite id={monster.id} size={96} anim={monsterAnim} />
+          <AnimatedSprite id={monster.id} size={140} anim={monsterAnim} />
         )}
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 px-2 py-0.5 rounded bg-black/50">
           {monster.isElite && (
             <span className="pixel text-xs text-red-400 border border-red-800 px-1 py-0.5 bg-red-950/50">ELITE</span>
           )}
@@ -1318,7 +1318,7 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
           )}
           <div className="pixel text-white text-xs">{monster.name}</div>
         </div>
-        <div className="w-full max-w-xs">
+        <div className="w-full max-w-xs px-2 py-1 rounded bg-black/50">
           <HpBar hp={monster.hp} maxHp={monster.maxHp} color="bg-red-700" />
         </div>
 
@@ -1347,16 +1347,37 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
         className="flex-1 flex flex-col items-center justify-center cursor-pointer touch-none relative"
         style={{ zIndex: 2 }}
       >
-        <div className="text-gray-700 text-xs pixel text-center leading-loose">
-          {phase === 'player_turn' && !specialReady && <>↑ Angriff <span className="text-gray-800">[↑]</span></>}
-          {phase === 'player_turn' && specialReady  && <span className="text-purple-300 animate-pulse">SPEZIAL BEREIT!<br/>Tippen / [Space]</span>}
-          {phase === 'enemy_telegraph' && !atk?.warn && <span className="text-gray-500">← Block [←] &nbsp; → Dodge [→]</span>}
-          {phase === 'enemy_telegraph' &&  atk?.warn && <span className="text-red-400 animate-pulse">← BLOCKEN! [←]<br/>(nicht ausweichbar)</span>}
+        <div className="pixel text-xs text-center leading-loose">
+          {phase === 'player_turn' && !specialReady && (
+            <span className="px-3 py-1 rounded bg-black/50 text-gray-300">
+              ↑ Angriff <span className="text-gray-500">[↑]</span>
+            </span>
+          )}
+          {phase === 'player_turn' && specialReady && (
+            <span className="px-3 py-1 rounded bg-purple-950/70 text-purple-200 animate-pulse">
+              SPEZIAL BEREIT!<br/>Tippen / [Space]
+            </span>
+          )}
+          {phase === 'enemy_telegraph' && !atk?.warn && (
+            <span className="px-3 py-1 rounded bg-black/50 text-gray-400">
+              ← Block [←] &nbsp; → Dodge [→]
+            </span>
+          )}
+          {phase === 'enemy_telegraph' && atk?.warn && (
+            <motion.span
+              className="px-4 py-2 rounded pixel text-sm text-red-200 bg-red-950/80 border border-red-600"
+              animate={{ scale: [1, 1.08, 1], opacity: [1, 0.7, 1] }}
+              transition={{ duration: 0.4, repeat: Infinity }}
+            >
+              ⚠ BLOCKEN! ←<br/>
+              <span className="text-xs text-red-400">(nicht ausweichbar)</span>
+            </motion.span>
+          )}
         </div>
       </div>
 
       {/* Player HUD */}
-      <div className="px-4 pb-6 safe-bottom flex flex-col gap-3" style={{ zIndex: 2 }}>
+      <div className="px-4 pt-3 pb-6 safe-bottom flex flex-col gap-3 bg-black/60 border-t border-dungeon-border" style={{ zIndex: 2 }}>
         {speedrunSec !== null && (
           <div className="text-center pixel text-amber-400" style={{ fontSize: '0.55rem' }}>
             ⏱️ {Math.floor(speedrunSec/60)}:{String(speedrunSec%60).padStart(2,'0')}
@@ -2498,18 +2519,20 @@ function BranchingMapScreen({ state, onChoose, onQuit }) {
 
 // ─── Shared Components ────────────────────────────────────────────────────────
 
-function HpBar({ hp, maxHp, color = 'bg-green-700' }) {
-  const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100))
-  const barColor = pct > 50 ? 'bg-green-700' : pct > 25 ? 'bg-yellow-600' : 'bg-red-700'
+function HpBar({ hp, maxHp, color = null }) {
+  const pct     = Math.max(0, Math.min(100, (hp / maxHp) * 100))
+  const isLow   = !color && pct <= 25
+  // Explicit color = enemy bar (stays red). No color = player bar (shifts green→yellow→red)
+  const barColor = color ?? (pct > 50 ? 'bg-green-700' : pct > 25 ? 'bg-yellow-600' : 'bg-red-700')
 
   return (
     <div className="w-full">
-      <div className="flex justify-between text-xs text-gray-500 mb-1">
-        <span>HP</span>
-        <span>{hp}/{maxHp}</span>
+      <div className="flex justify-between text-xs mb-1">
+        <span className={isLow ? 'text-red-400 animate-pulse' : 'text-gray-500'}>HP</span>
+        <span className={isLow ? 'text-red-400 animate-pulse' : 'text-gray-500'}>{hp}/{maxHp}</span>
       </div>
-      <div className="bar-track">
-        <div className={`bar-fill ${barColor}`} style={{ width: `${pct}%` }} />
+      <div className={`bar-track ${isLow ? 'animate-pulse' : ''}`}>
+        <div className={`bar-fill ${barColor}`} style={{ width: `${pct}%`, transition: 'width 0.3s ease' }} />
       </div>
     </div>
   )
