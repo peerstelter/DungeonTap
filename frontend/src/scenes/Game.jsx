@@ -844,28 +844,102 @@ function GameInner({ playerClass, seed, isDaily, savedHero, modifier, isBranchin
     return attachSwipeListener(el, handleSwipe)
   }, [handleSwipe])
 
-  // Keyboard controls (desktop)
+  // Branching-map keyboard selection (which available node is highlighted)
+  const [branchSelIdx, setBranchSelIdx] = useState(0)
+  const branchSelRef = useRef(0)
+  function setBranchSel(idx) { branchSelRef.current = idx; setBranchSelIdx(idx) }
+  useEffect(() => { if (state.phase === 'branching_map') setBranchSel(0) }, [state.phase])
+
+  // ── Universal keyboard controls ──────────────────────────────────────────────
   useEffect(() => {
     function onKey(e) {
-      if (state.phase !== 'combat') return
-      const combatPhase = state.combat?.phase
-      const specialReady = state.combat?.specialBar >= 100
+      const phase = state.phase
 
-      if (combatPhase === 'player_turn') {
-        if (e.key === 'ArrowUp')   { e.preventDefault(); sfx.attack(); dispatch({ type: 'PLAYER_ACTION', action: 'attack' }) }
-        if ((e.key === ' ' || e.key === 'ArrowDown') && specialReady) {
-          e.preventDefault()
-          dispatch({ type: 'PLAYER_ACTION', action: 'special', timingBonus: 1.0, fromKeyboard: true })
+      // ── Combat ────────────────────────────────────────────────────────────────
+      if (phase === 'combat') {
+        const cp = state.combat?.phase
+        const sr = state.combat?.specialBar >= 100
+        if (cp === 'player_turn') {
+          if (e.key === 'ArrowUp') { e.preventDefault(); sfx.attack(); dispatch({ type: 'PLAYER_ACTION', action: 'attack' }) }
+          if ((e.key === ' ' || e.key === 'ArrowDown') && sr) {
+            e.preventDefault()
+            dispatch({ type: 'PLAYER_ACTION', action: 'special', timingBonus: 1.0, fromKeyboard: true })
+          }
         }
+        if (cp === 'enemy_telegraph') {
+          if (e.key === 'ArrowLeft')  { e.preventDefault(); sfx.block(); dispatch({ type: 'BLOCK_INPUT' }) }
+          if (e.key === 'ArrowRight') { e.preventDefault(); sfx.dodge(); dispatch({ type: 'DODGE_INPUT' }) }
+        }
+        return
       }
-      if (combatPhase === 'enemy_telegraph') {
-        if (e.key === 'ArrowLeft')  { e.preventDefault(); sfx.block(); dispatch({ type: 'BLOCK_INPUT' }) }
-        if (e.key === 'ArrowRight') { e.preventDefault(); sfx.dodge(); dispatch({ type: 'DODGE_INPUT' }) }
+
+      // ── Branching map — ←/→ cycle nodes, Enter confirm ───────────────────────
+      if (phase === 'branching_map') {
+        const bm = state.branchingMap
+        const avail = bm ? (bm.currentNodeId ? bm.nodes[bm.currentNodeId]?.next ?? [] : bm.layers[0]) : []
+        if (e.key === 'ArrowLeft')  { e.preventDefault(); setBranchSel(Math.max(0, branchSelRef.current - 1)) }
+        if (e.key === 'ArrowRight') { e.preventDefault(); setBranchSel(Math.min(avail.length - 1, branchSelRef.current + 1)) }
+        if ((e.key === 'Enter' || e.key === ' ') && avail.length) {
+          e.preventDefault()
+          dispatch({ type: 'CHOOSE_NODE', nodeId: avail[branchSelRef.current] })
+        }
+        return
+      }
+
+      // ── Dungeon map — Enter to enter room ─────────────────────────────────────
+      if (phase === 'dungeon_map' || phase === 'story_map') {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); dispatch({ type: 'ENTER_ROOM' }) }
+        return
+      }
+
+      // ── Boss intro — Enter to fight ───────────────────────────────────────────
+      if (phase === 'boss_intro') {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); dispatch({ type: 'DISMISS_BOSS_INTRO' }) }
+        return
+      }
+
+      // ── Loot — Enter to advance ───────────────────────────────────────────────
+      if (phase === 'loot') {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); dispatch({ type: 'NEXT_FLOOR' }) }
+        return
+      }
+
+      // ── Level up — 1/2/3(/4) to pick perk ────────────────────────────────────
+      if (phase === 'level_up') {
+        const perks = state.pendingPerkIds ?? []
+        const idx = parseInt(e.key) - 1
+        if (idx >= 0 && idx < perks.length) { e.preventDefault(); dispatch({ type: 'PICK_PERK', perkId: perks[idx] }) }
+        return
+      }
+
+      // ── Leave-room phases — Enter to continue ────────────────────────────────
+      if (['rest', 'treasure', 'event', 'trap'].includes(phase)) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); dispatch({ type: 'LEAVE_ROOM' }) }
+        return
+      }
+
+      // ── Shop — Escape to leave ────────────────────────────────────────────────
+      if (phase === 'shop') {
+        if (e.key === 'Escape') { e.preventDefault(); dispatch({ type: 'LEAVE_SHOP' }) }
+        return
+      }
+
+      // ── Run end — Enter retry, Escape menu ────────────────────────────────────
+      if (phase === 'game_over' || phase === 'victory_run') {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          if (state.challenge?.permadeath) { navigate('/') }
+          else if (isDaily) navigate('/game?mode=daily')
+          else if (state.challenge) navigate('/game?mode=challenge')
+          else navigate('/class-select')
+        }
+        if (e.key === 'Escape') { e.preventDefault(); navigate('/') }
+        return
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [state.phase, state.combat?.phase, state.combat?.specialBar])
+  }, [state.phase, state.combat?.phase, state.combat?.specialBar, state.pendingPerkIds, state.branchingMap]) // eslint-disable-line
 
   if (state.phase === 'act_intro') {
     return (
@@ -914,6 +988,7 @@ function GameInner({ playerClass, seed, isDaily, savedHero, modifier, isBranchin
         state={state}
         onChoose={(nodeId) => dispatch({ type: 'CHOOSE_NODE', nodeId })}
         onQuit={() => navigate('/')}
+        keySelIdx={branchSelIdx}
       />
     )
   }
@@ -1142,7 +1217,7 @@ function DungeonMap({ state, onEnter, onQuit, isReturningDaily, isStory }) {
           whileTap={{ scale: 0.97 }}
           className="mt-4 py-4 pixel text-sm border-2 border-gold bg-dungeon-gold text-dungeon-black"
         >
-          RAUM BETRETEN
+          RAUM BETRETEN <span className="opacity-50 text-xs">[ENTER]</span>
         </motion.button>
       )}
     </div>
@@ -1548,7 +1623,7 @@ function RestScreen({ state, onNext }) {
         onClick={onNext}
         className="w-full max-w-xs py-4 pixel text-sm border-2 border-gold bg-dungeon-gold text-dungeon-black active:scale-95"
       >
-        WEITER →
+        WEITER → <span className="opacity-50 text-xs">[ENTER]</span>
       </button>
     </div>
   )
@@ -1576,7 +1651,7 @@ function TreasureScreen({ state, onNext }) {
         onClick={onNext}
         className="w-full max-w-xs py-4 pixel text-sm border-2 border-gold bg-dungeon-gold text-dungeon-black active:scale-95"
       >
-        WEITER →
+        WEITER → <span className="opacity-50 text-xs">[ENTER]</span>
       </button>
     </div>
   )
@@ -1605,7 +1680,7 @@ function LootScreen({ state, onNext }) {
         onClick={onNext}
         className="w-full max-w-xs py-4 pixel text-sm border-2 border-gold bg-dungeon-gold text-dungeon-black active:scale-95"
       >
-        WEITER →
+        WEITER → <span className="opacity-50 text-xs">[ENTER]</span>
       </button>
     </div>
   )
@@ -1665,7 +1740,7 @@ function LevelUpScreen({ state, onPick }) {
               <div className="pixel text-xs text-gold-light">{perk.title}</div>
               <div className="text-gray-500 text-xs mt-0.5">{perk.desc}</div>
             </div>
-            <span className="text-gray-600 text-xs">→</span>
+            <span className="pixel text-gray-600 text-xs border border-gray-700 px-1.5 py-0.5">{i + 1}</span>
           </motion.button>
         ))}
       </div>
@@ -1743,7 +1818,7 @@ function BossIntroScreen({ state, onFight }) {
         onClick={onFight}
         className={`w-full max-w-xs py-5 pixel text-sm border-2 ${isMidBoss ? 'border-yellow-700 bg-yellow-950 text-yellow-200' : 'border-red-600 bg-red-950 text-red-200'} active:bg-red-900`}
       >
-        KÄMPFEN →
+        KÄMPFEN → <span className="opacity-50 text-xs">[ENTER]</span>
       </motion.button>
     </div>
   )
@@ -1801,7 +1876,7 @@ function EventScreen({ state, onNext }) {
         onClick={onNext}
         className="w-full max-w-xs py-4 pixel text-sm border-2 border-purple-700 bg-purple-950 text-purple-200 active:scale-95"
       >
-        WEITER →
+        WEITER → <span className="opacity-50 text-xs">[ENTER]</span>
       </button>
     </div>
   )
@@ -1859,7 +1934,7 @@ function TrapScreen({ state, onNext }) {
         onClick={onNext}
         className="w-full max-w-xs py-4 pixel text-sm border-2 border-orange-800 bg-orange-950 text-orange-200 active:scale-95"
       >
-        WEITER →
+        WEITER → <span className="opacity-50 text-xs">[ENTER]</span>
       </button>
     </div>
   )
@@ -2358,7 +2433,7 @@ function StoryCompleteScreen({ player, onMenu, onLeaderboard }) {
 
 // ─── Branching Map Screen ─────────────────────────────────────────────────────
 
-function BranchingMapScreen({ state, onChoose, onQuit }) {
+function BranchingMapScreen({ state, onChoose, onQuit, keySelIdx = 0 }) {
   const { branchingMap, player } = state
   const { nodes, layers, totalLayers } = branchingMap
   const currentNode = branchingMap.currentNodeId ? nodes[branchingMap.currentNodeId] : null
@@ -2486,25 +2561,30 @@ function BranchingMapScreen({ state, onChoose, onQuit }) {
         </div>
       </div>
 
-      {/* Available choices strip — primary interaction on mobile */}
+      {/* Available choices strip — primary interaction on mobile + keyboard */}
       {availableIds.length > 0 && (
         <div className="mt-2 pt-2 border-t border-dungeon-border">
-          <div className="text-gray-600 pixel mb-2" style={{ fontSize: '0.48rem' }}>
-            VERFÜGBARE PFADE
+          <div className="flex justify-between items-center mb-2">
+            <div className="text-gray-600 pixel" style={{ fontSize: '0.48rem' }}>VERFÜGBARE PFADE</div>
+            <div className="text-gray-700 pixel" style={{ fontSize: '0.42rem' }}>← → WÄHLEN · ENTER BESTÄTIGEN</div>
           </div>
           <div className="flex gap-2">
-            {availableIds.map(id => {
+            {availableIds.map((id, i) => {
               const node = nodes[id]
               const info = ROOM_TYPES[node?.type]
+              const isKeySel = i === keySelIdx
               return (
                 <motion.button
                   key={id}
                   whileTap={{ scale: 0.95 }}
                   onClick={() => onChoose(id)}
-                  className="flex-1 flex flex-col items-center gap-1.5 border-2 border-amber-700 bg-amber-950/30 py-3 active:bg-amber-950/60 transition-colors"
+                  className={`flex-1 flex flex-col items-center gap-1.5 border-2 py-3 transition-colors
+                    ${isKeySel
+                      ? 'border-gold bg-amber-900/50 shadow-[0_0_8px_2px_rgba(201,162,39,0.4)]'
+                      : 'border-amber-700 bg-amber-950/30 active:bg-amber-950/60'}`}
                 >
                   <span className="text-2xl">{info?.icon ?? '?'}</span>
-                  <span className="pixel text-amber-400" style={{ fontSize: '0.48rem' }}>
+                  <span className={`pixel ${isKeySel ? 'text-gold' : 'text-amber-400'}`} style={{ fontSize: '0.48rem' }}>
                     {info?.label ?? node?.type}
                   </span>
                 </motion.button>
