@@ -12,6 +12,9 @@ import { createCombatState, applyPlayerAction, applyBlock, applyDodge, resolveEn
 import { attachSwipeListener } from '../game/swipe'
 import { sfx, unlockAudio } from '../game/sound'
 import MonsterSprite from '../components/MonsterSprite'
+import AnimatedSprite from '../components/AnimatedSprite'
+import VfxCanvas from '../components/VfxCanvas'
+import BiomeBg from '../components/BiomeBg'
 import RoomTile from '../components/RoomTile'
 
 const TELEGRAPH_MS = 850 // time player has to block/dodge before hit lands
@@ -1167,9 +1170,6 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
   const [shakeKey, setShakeKey] = useState(0)
   function triggerShake() { setShakeKey(k => k + 1) }
 
-  // Floating damage numbers [{id, text, color, forMonster}]
-  const [floats, setFloats] = useState([])
-
   // Guitar Hero cursor
   const cursorRef = useRef(50)
   const dirRef    = useRef(1)
@@ -1187,52 +1187,43 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
         setMonsterFlash(true)
         setTimeout(() => setMonsterFlash(false), 120)
         sfx.hit()
-        addFloat(`-${entry.dmg}`, entry.type === 'player_special' ? 'text-purple-400' : 'text-orange-400', true)
         break
       case 'enemy_attack':
         setPlayerFlash(true)
         setTimeout(() => setPlayerFlash(false), 300)
         sfx.hit()
-        addFloat(`-${entry.dmg}`, 'text-red-500', false)
         // Heavy hit shake: if damage > 20% of max HP
         if (entry.dmg >= Math.round(combat.player.maxHp * 0.20)) triggerShake()
         break
       case 'player_blocked':
         setPlayerFlash(true)
         setTimeout(() => setPlayerFlash(false), 200)
-        addFloat(`-${entry.dmg}`, 'text-blue-400', false)
         // Shake even on blocked heavy attacks (WUCHT / power moves)
         if (entry.heavy) triggerShake()
         break
       case 'player_grazed':
         setPlayerFlash(true)
         setTimeout(() => setPlayerFlash(false), 200)
-        addFloat(`-${entry.dmg}`, 'text-yellow-500', false)
         break
       case 'player_dodged':
-        addFloat('DODGE!', 'text-green-400', false)
         break
       case 'shield_counter':
         setPlayerFlash(true)
         setTimeout(() => setPlayerFlash(false), 200)
         sfx.shieldCounter()
-        addFloat(`🛡 -${entry.dmg}`, 'text-cyan-400', false)
         break
       case 'shield_counter_dmg':
-        addFloat(`⚡ -${entry.dmg}`, 'text-cyan-300', true)
         break
       case 'status_tick':
         if (entry.effect === 'poison' && entry.target === 'player') {
           sfx.poison()
           setPlayerFlash(true)
           setTimeout(() => setPlayerFlash(false), 200)
-          addFloat(`☠ -${entry.dmg}`, 'text-green-500', false)
         }
         if (entry.effect === 'burn' && entry.target === 'monster') {
           sfx.burn()
           setMonsterFlash(true)
           setTimeout(() => setMonsterFlash(false), 120)
-          addFloat(`🔥 -${entry.dmg}`, 'text-orange-400', true)
         }
         break
       case 'status_apply':
@@ -1244,12 +1235,6 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
     if (combat.phase === 'victory') sfx.victory()
     if (combat.phase === 'defeat')  sfx.death()
   }, [combat.log.length]) // eslint-disable-line
-
-  function addFloat(text, color, forMonster) {
-    const id = Date.now() + Math.random()
-    setFloats(prev => [...prev, { id, text, color, forMonster }])
-    setTimeout(() => setFloats(prev => prev.filter(f => f.id !== id)), 900)
-  }
 
   // Special cursor animation
   useEffect(() => {
@@ -1277,8 +1262,21 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
     onSpecial(perfect ? 2.0 : 1.0)
   }
 
+  const biome = getBiome(player.floor)
+  const monsterAnim = dying ? 'death'
+    : monsterFlash ? 'hurt'
+    : phase === 'enemy_telegraph' ? 'attack'
+    : 'idle'
+  const lastLogEntry = combat.log[combat.log.length - 1]
+
   return (
-    <div key={shakeKey} className={`flex flex-col h-full safe-top safe-bottom bg-dungeon select-none ${shakeKey > 0 ? 'shake' : ''}`}>
+    <div key={shakeKey} className={`relative flex flex-col h-full safe-top safe-bottom select-none ${shakeKey > 0 ? 'shake' : ''}`}>
+      {/* Procedural biome background */}
+      <BiomeBg biome={biome} />
+
+      {/* Canvas VFX overlay — particles + floating damage numbers */}
+      <VfxCanvas lastLogEntry={lastLogEntry} />
+
       {/* Player hit flash overlay */}
       <AnimatePresence>
         {playerFlash && (
@@ -1292,26 +1290,7 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
       </AnimatePresence>
 
       {/* Monster area */}
-      <div className="relative flex flex-col items-center pt-8 px-4 gap-3">
-        {/* Floating numbers above monster */}
-        <div className="absolute top-2 left-0 right-0 flex justify-center pointer-events-none">
-          <AnimatePresence>
-            {floats.filter(f => f.forMonster).map(f => (
-              <motion.div
-                key={f.id}
-                className={`pixel text-sm absolute ${f.color}`}
-                initial={{ y: 0, opacity: 1 }}
-                animate={{ y: -50, opacity: 0 }}
-                exit={{}}
-                transition={{ duration: 0.8 }}
-                style={{ left: `${40 + Math.random() * 20}%` }}
-              >
-                {f.text}
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </div>
-
+      <div className="relative flex flex-col items-center pt-8 px-4 gap-3" style={{ zIndex: 2 }}>
         {dying ? (
           <motion.div
             initial={{ scale: 1, opacity: 1, y: 0, rotate: 0 }}
@@ -1324,15 +1303,10 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
             transition={{ duration: 0.75, ease: 'easeIn' }}
             onAnimationComplete={onDeathDone}
           >
-            <MonsterSprite id={monster.id} size={96} flash />
+            <AnimatedSprite id={monster.id} size={96} anim="death" />
           </motion.div>
         ) : (
-          <motion.div
-            animate={phase === 'enemy_telegraph' ? { x: [0, -8, 8, -8, 0] } : {}}
-            transition={{ duration: 0.35 }}
-          >
-            <MonsterSprite id={monster.id} size={96} flash={monsterFlash} />
-          </motion.div>
+          <AnimatedSprite id={monster.id} size={96} anim={monsterAnim} />
         )}
 
         <div className="flex items-center gap-2">
@@ -1371,25 +1345,8 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
       <div
         ref={swipeZoneRef}
         className="flex-1 flex flex-col items-center justify-center cursor-pointer touch-none relative"
+        style={{ zIndex: 2 }}
       >
-        {/* Floating numbers for player damage */}
-        <div className="absolute inset-0 pointer-events-none flex justify-center items-center">
-          <AnimatePresence>
-            {floats.filter(f => !f.forMonster).map(f => (
-              <motion.div
-                key={f.id}
-                className={`pixel text-sm absolute ${f.color}`}
-                initial={{ y: 0, opacity: 1 }}
-                animate={{ y: -40, opacity: 0 }}
-                exit={{}}
-                transition={{ duration: 0.7 }}
-              >
-                {f.text}
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </div>
-
         <div className="text-gray-700 text-xs pixel text-center leading-loose">
           {phase === 'player_turn' && !specialReady && <>↑ Angriff <span className="text-gray-800">[↑]</span></>}
           {phase === 'player_turn' && specialReady  && <span className="text-purple-300 animate-pulse">SPEZIAL BEREIT!<br/>Tippen / [Space]</span>}
@@ -1399,7 +1356,7 @@ function CombatScreen({ state, swipeZoneRef, onSpecial, dying = false, onDeathDo
       </div>
 
       {/* Player HUD */}
-      <div className="px-4 pb-6 safe-bottom flex flex-col gap-3">
+      <div className="px-4 pb-6 safe-bottom flex flex-col gap-3" style={{ zIndex: 2 }}>
         {speedrunSec !== null && (
           <div className="text-center pixel text-amber-400" style={{ fontSize: '0.55rem' }}>
             ⏱️ {Math.floor(speedrunSec/60)}:{String(speedrunSec%60).padStart(2,'0')}
